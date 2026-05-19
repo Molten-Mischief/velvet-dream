@@ -182,10 +182,11 @@ html, body {
   display: none; align-items: center; gap: 8px; padding: 6px 12px;
   background: var(--accent-glow); border-bottom: 1px solid var(--border);
   font-size: 11px; color: var(--accent); flex-wrap: wrap; justify-content: space-between;
-  transition: opacity 0.2s ease;
+  transition: top 0.25s ease, opacity 0.2s ease;
 }
 .info-bar.visible { display: flex; }
-.header.hidden ~ .info-bar { opacity: 0; pointer-events: none; }
+/* When header hides, info bar slides up to take its place */
+.header.hidden ~ .info-bar { top: 0; }
 .info-bar-left { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .memory-tag { background: var(--accent-dim); color: var(--bg-primary); padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; }
 .token-badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; white-space: nowrap; font-family: 'JetBrains Mono', monospace; }
@@ -1238,7 +1239,7 @@ async function backfillEmbeddings() {
   if (added > 0) console.log(`Backfill complete: ${added} embedded, ${failed} failed`);
 }
 
-function updateInfoBar(memories, totalTokens) {
+function updateInfoBar(memories, totalTokens, phase) {
   const bar = document.getElementById('infoBar');
   const left = document.getElementById('infoBarLeft');
   const badge = document.getElementById('tokenBadge');
@@ -1250,7 +1251,8 @@ function updateInfoBar(memories, totalTokens) {
   }
   left.innerHTML = html;
   if (totalTokens) {
-    badge.textContent = `~${tokenLabel(totalTokens)} tokens`;
+    const arrow = phase === 'received' ? '↓' : '↑';
+    badge.textContent = `${arrow} ~${tokenLabel(totalTokens)} tokens`;
     badge.className = 'token-badge ' + tokenClass(totalTokens);
   } else {
     badge.textContent = '';
@@ -1309,7 +1311,7 @@ async function buildApiMessages(chat, userContent) {
   const ctx = state.contextMessages || 8;
   chat.messages.slice(-ctx).forEach(m => messages.push({ role: m.role, content: m.content }));
   const totalText = messages.map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join(' ');
-  updateInfoBar(mems, estimateTokens(totalText));
+  updateInfoBar(mems, estimateTokens(totalText), 'sent');
   return messages;
 }
 
@@ -1419,7 +1421,7 @@ async function sendMessage() {
         'HTTP-Referer': 'https://kai.app',
         'X-Title': 'Kai'
       },
-      body: JSON.stringify({ model: chat.model, messages: apiMsgs, stream: true, ...buildApiParams() }),
+      body: JSON.stringify({ model: chat.model, messages: apiMsgs, stream: true, stream_options: { include_usage: true }, ...buildApiParams() }),
       signal: abortController.signal
     });
 
@@ -1437,6 +1439,7 @@ async function sendMessage() {
 
     let full = '';
     let realModel = '';
+    let completionTokens = 0;
     const reader = resp.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
@@ -1454,6 +1457,8 @@ async function sendMessage() {
         try {
           const parsed = JSON.parse(d);
           if (parsed.model && !realModel) realModel = parsed.model;
+          // Capture usage from any chunk that has it (typically the final one)
+          if (parsed.usage?.completion_tokens) completionTokens = parsed.usage.completion_tokens;
           const delta = parsed.choices?.[0]?.delta?.content;
           if (delta) {
             full += delta;
@@ -1469,6 +1474,10 @@ async function sendMessage() {
     saveState();
     renderChatList();
     renderMessages();
+    // Swap info bar to show response token count
+    if (completionTokens > 0) {
+      updateInfoBar([], completionTokens, 'received');
+    }
 
   } catch (err) {
     document.getElementById('typing')?.remove();
