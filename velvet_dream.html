@@ -1125,7 +1125,7 @@ async function summarizeOlderMessages(chat) {
       body: JSON.stringify({
         model: chat.model || DEFAULT_MODELS[0].id,
         messages: [{ role: 'system', content: prompt }, ...old.map(m => ({ role: m.role, content: typeof m.content === 'string' ? m.content : '[image]' }))],
-        temperature: 0.3, max_tokens: 800
+        temperature: 0.3, max_tokens: 2000
       })
     });
     if (!resp.ok) return;
@@ -1639,7 +1639,7 @@ ${transcript}`;
         model: chat.model || DEFAULT_MODELS[0].id,
         messages: [{ role: 'user', content: capturePrompt }],
         temperature: 0.3,
-        max_tokens: 800
+        max_tokens: 2000
       })
     });
 
