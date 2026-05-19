@@ -1613,11 +1613,11 @@ async function captureMemoryFromMessage(idx, btn) {
 
 Your job is to build a memory fragment around the marked anchor.
 
-Output exactly this structure, in this exact order, with each label on its own line:
+Output exactly this structure. Begin your response with TITLE on the first line, KEYWORDS on the second line, then a blank line, then the body:
 
 TITLE: a short title anchored to the key moment
 KEYWORDS: 5-8 comma-separated keywords for retrieval
----
+
 ANCHOR
 "exact words from the anchor message — copy verbatim, do not paraphrase, 1-3 lines"
 
@@ -1629,7 +1629,7 @@ AFTERMATH
 
 IMPORTANT: Generate LEAD-UP and AFTERMATH only if there is meaningful narrative around the anchor. If the anchor is a pure factual statement with no surrounding dynamic (a name, a preference, a piece of information being shared), output only the ANCHOR section and stop. Do not invent narrative.
 
-The --- separator MUST be on its own line, with nothing before or after it on that line. Do not use --- anywhere else in your output. Do not wrap in JSON. Do not use markdown headers.
+Do not wrap in JSON. Do not use markdown headers (no # symbols). Do not use --- separators. Just the labels above as written.
 
 Conversation window (${window.length} messages):
 ${transcript}`;
@@ -1656,37 +1656,29 @@ ${transcript}`;
     let raw = data.choices?.[0]?.message?.content || '';
     raw = raw.replace(/```\w*\s*/g, '').replace(/```/g, '').trim();
 
-    // Parse labeled output: TITLE / KEYWORDS / --- / content body
+    // Parse: TITLE line, KEYWORDS line, then everything else is content
     let title = 'Captured memory';
     let keywords = [];
-    let content = raw;
 
     const titleMatch = raw.match(/^TITLE:\s*(.+)$/m);
     if (titleMatch) title = titleMatch[1].trim();
 
     const keywordsMatch = raw.match(/^KEYWORDS:\s*(.+)$/m);
     if (keywordsMatch) {
-      // Defensive: split off any trailing --- from the keywords line
-      const kwLine = keywordsMatch[1].split(/---/)[0];
-      keywords = kwLine.split(',').map(k => k.trim().toLowerCase()).filter(k => k && k.length < 50).slice(0, 8);
+      keywords = keywordsMatch[1].split(',').map(k => k.trim().toLowerCase()).filter(k => k && k.length < 50).slice(0, 8);
     }
 
-    // Content is everything after a line that is JUST --- (own line, no other chars)
-    const sepRegex = /^---\s*$/m;
-    const sepMatch = raw.match(sepRegex);
-    if (sepMatch) {
-      content = raw.slice(sepMatch.index + sepMatch[0].length).trim();
-    } else {
-      // No separator on its own line — strip the labeled header lines and use the rest
-      content = raw
-        .replace(/^TITLE:.*$/m, '')
-        .replace(/^KEYWORDS:.*$/m, '')
-        .trim();
-    }
+    // Content is the raw output with the TITLE: and KEYWORDS: lines removed,
+    // and any stray --- lines cleaned out. Whatever remains is the memory body.
+    let content = raw
+      .replace(/^TITLE:.*$/m, '')
+      .replace(/^KEYWORDS:.*$/m, '')
+      .replace(/^---\s*$/gm, '')
+      .trim();
 
-    // Final safety: if content somehow ended up empty or trivially short, fall back to raw
-    if (!content || content.length < 10) {
-      content = raw.replace(/^TITLE:.*$/m, '').replace(/^KEYWORDS:.*$/m, '').trim();
+    // Final safety: if for any reason content ended up very short, use the raw output
+    if (!content || content.length < 20) {
+      content = raw;
     }
 
     // Hold as draft — NOT pushed to state.memories
