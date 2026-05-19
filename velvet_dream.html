@@ -1627,7 +1627,9 @@ LEAD-UP
 AFTERMATH
 2-3 sentences on what shifted after, OR if the anchor is the most recent message, what this moment opens up. Include any takeaway — something ${aiName} should carry forward into future conversations.
 
-Do not add any other text before TITLE or after the AFTERMATH section. Do not wrap in JSON. Do not use markdown headers. Use the exact format above.
+IMPORTANT: Generate LEAD-UP and AFTERMATH only if there is meaningful narrative around the anchor. If the anchor is a pure factual statement with no surrounding dynamic (a name, a preference, a piece of information being shared), output only the ANCHOR section and stop. Do not invent narrative.
+
+The --- separator MUST be on its own line, with nothing before or after it on that line. Do not use --- anywhere else in your output. Do not wrap in JSON. Do not use markdown headers.
 
 Conversation window (${window.length} messages):
 ${transcript}`;
@@ -1664,19 +1666,27 @@ ${transcript}`;
 
     const keywordsMatch = raw.match(/^KEYWORDS:\s*(.+)$/m);
     if (keywordsMatch) {
-      keywords = keywordsMatch[1].split(',').map(k => k.trim().toLowerCase()).filter(k => k && k.length < 50).slice(0, 8);
+      // Defensive: split off any trailing --- from the keywords line
+      const kwLine = keywordsMatch[1].split(/---/)[0];
+      keywords = kwLine.split(',').map(k => k.trim().toLowerCase()).filter(k => k && k.length < 50).slice(0, 8);
     }
 
-    // Content is everything after the --- separator (or fall back to raw if no separator found)
-    const sepIdx = raw.indexOf('---');
-    if (sepIdx >= 0) {
-      content = raw.slice(sepIdx + 3).trim();
+    // Content is everything after a line that is JUST --- (own line, no other chars)
+    const sepRegex = /^---\s*$/m;
+    const sepMatch = raw.match(sepRegex);
+    if (sepMatch) {
+      content = raw.slice(sepMatch.index + sepMatch[0].length).trim();
     } else {
-      // No separator — strip TITLE: and KEYWORDS: lines and use the rest
+      // No separator on its own line — strip the labeled header lines and use the rest
       content = raw
         .replace(/^TITLE:.*$/m, '')
         .replace(/^KEYWORDS:.*$/m, '')
         .trim();
+    }
+
+    // Final safety: if content somehow ended up empty or trivially short, fall back to raw
+    if (!content || content.length < 10) {
+      content = raw.replace(/^TITLE:.*$/m, '').replace(/^KEYWORDS:.*$/m, '').trim();
     }
 
     // Hold as draft — NOT pushed to state.memories
