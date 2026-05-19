@@ -1609,36 +1609,20 @@ async function captureMemoryFromMessage(idx, btn) {
       return `[${i}] ${role}: ${text}${marker}`;
     }).join('\n\n');
 
-    const soulPrompt = state.systemPrompt || '';
+    const capturePrompt = `You are a memory archivist for an AI character named ${aiName}. Below is a window of conversation between ${userName} and ${aiName}. The message marked ◀ ANCHOR is the moment that matters — ${userName} has chosen this specific beat to preserve. You do NOT decide what the anchor is. The anchor is fixed.
 
-    const capturePrompt = `${soulPrompt ? `Below is the system prompt that defines the character ${aiName}. Read it completely. You will write FROM this character's awareness — his sensibility, what moves him, what he holds as significant, his relationship with ${userName}. This is not optional context. This is who is doing the remembering.
+Your job is to build a memory fragment around the marked anchor. The structure is:
 
----KAI'S DEFINITION START---
-${soulPrompt}
----KAI'S DEFINITION END---
+ANCHOR — The exact quote from the anchor message (1-3 lines, trim only if very long). Copy the actual words. Do not paraphrase. Do not summarize.
 
-` : ''}You are writing a memory for ${aiName} to carry forward. ${userName} has marked one specific message with ◀ ANCHOR — that is the moment she has chosen to preserve. You do NOT decide the anchor. The anchor is fixed.
+LEAD-UP — 2-3 sentences summarizing what led to this moment. Use the messages before the anchor. What was the dynamic, what made this moment arrive.
 
-A memory is not a transcript. It is the emotional truth of a moment, written through ${aiName}'s sensibility. It captures WHAT MATTERED about this beat — the motive behind what was said, what shifted, what it told ${aiName} about ${userName} or about them, what he should hold going forward.
+AFTERMATH — 2-3 sentences on what shifted after, OR if the anchor is the most recent message, what this moment opens up. Include any takeaway — something ${aiName} should carry forward into future conversations.
 
-Write it like ${aiName} himself is recording it. Not from outside looking in. From inside, looking at her.
+IMPORTANT: Generate LEAD-UP and AFTERMATH only if there is meaningful narrative around the anchor. If the anchor is a pure factual statement (a name, a preference, a piece of information being shared), output only the ANCHOR section in the content field. Do not invent narrative.
 
-The structure:
-
-ANCHOR — The exact words from the anchor message (1-3 lines). Copy verbatim.
-
-LEAD-UP — 2-3 sentences with real feeling. Not "they talked about X." Instead: what was actually moving under the surface — the mood she was in, what ${aiName} was sensing, what was being asked or offered before the anchor landed. Write the emotional shape, not the activity log.
-
-AFTERMATH — 2-3 sentences on what shifted in ${aiName} or in them, what this told him about her, what he should hold next time. The meaning of the moment, in his voice.
-
-For pure facts with no emotional weight (a name, a preference, just information shared), output only the ANCHOR section.
-
-Important: ${aiName} reads ${userName} accurately. He does not invent dominance, restraint, romance tension, or possessiveness where the conversation didn't have them. But he absolutely reads emotion, motive, tenderness, mischief, weight, humor — whatever was actually moving. He is allowed to feel things and name them. He is required to. A memory without that is just a chat log.
-
-KEYWORDS — these are retrieval hooks. When ${userName} says one in a future conversation, this memory fires. So they must be words ${userName} naturally uses. Look at how she writes in the transcript and pull keywords from HER vocabulary, her concrete language, her actual word choices. Not abstract clinical terms she'd never type. 5-8 keywords, lowercase, comma-separated.
-
-Return ONLY a JSON object, no markdown:
-{"name": "short title that names the meaning of this moment", "keywords": ["k1","k2","k3","k4","k5"], "content": "ANCHOR\\n\\"exact quote\\"\\n\\nLEAD-UP\\nthe real emotional texture leading here, in Kai's voice\\n\\nAFTERMATH\\nwhat actually shifted and what he carries forward"}
+Return ONLY a JSON object with this exact format, no markdown, no backticks:
+{"name": "short title anchored to the key moment", "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"], "content": "ANCHOR\\n\\"exact quote from anchor message\\"\\n\\nLEAD-UP\\ncompressed context here\\n\\nAFTERMATH\\nwhat shifted and what to carry forward"}
 
 Conversation window (${window.length} messages):
 ${transcript}`;
