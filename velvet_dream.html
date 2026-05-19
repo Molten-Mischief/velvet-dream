@@ -1239,15 +1239,28 @@ async function backfillEmbeddings() {
   if (added > 0) console.log(`Backfill complete: ${added} embedded, ${failed} failed`);
 }
 
+// Tracks the memories currently shown in the info bar so we can preserve them across phases
+let lastInfoBarMemories = [];
+
 function updateInfoBar(memories, totalTokens, phase) {
   const bar = document.getElementById('infoBar');
   const left = document.getElementById('infoBarLeft');
   const badge = document.getElementById('tokenBadge');
-  if (memories.length === 0 && !totalTokens) { bar.classList.remove('visible'); return; }
+
+  // For 'received' phase, keep the chips that were shown for the outgoing message
+  // (unless memories is explicitly non-empty — caller is replacing them)
+  let memsToShow = memories;
+  if (phase === 'received' && memories.length === 0) {
+    memsToShow = lastInfoBarMemories;
+  } else {
+    lastInfoBarMemories = memories;
+  }
+
+  if (memsToShow.length === 0 && !totalTokens) { bar.classList.remove('visible'); return; }
   bar.classList.add('visible');
   let html = '';
-  if (memories.length > 0) {
-    html = '✦ ' + memories.map(m => `<span class="memory-tag">${m.pinned ? '📌' : '◐'} ${escapeHtml(m.name)}</span>`).join('');
+  if (memsToShow.length > 0) {
+    html = '✦ ' + memsToShow.map(m => `<span class="memory-tag">${m.pinned ? '📌' : '◐'} ${escapeHtml(m.name)}</span>`).join('');
   }
   left.innerHTML = html;
   if (totalTokens) {
@@ -1363,6 +1376,10 @@ async function sendMessage() {
   if ((!text && !pendingImages.length) || state.isStreaming) return;
   if (!state.apiKey) { showToast('Set API key in Settings'); openSettings(); return; }
   if (!getActiveChat()) newChat();
+
+  // Clear info bar from previous turn — new send starts fresh
+  lastInfoBarMemories = [];
+  updateInfoBar([], null);
 
   const chat = getActiveChat();
   chat.model = document.getElementById('modelSelect').value;
