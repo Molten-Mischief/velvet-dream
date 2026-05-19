@@ -1651,7 +1651,18 @@ ${transcript}`;
     // Clean up potential markdown fences
     raw = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
 
-    const parsed = JSON.parse(raw);
+    let parsed = null;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      // Model didn't return JSON — fall back to using the raw text directly.
+      // Try to extract a title from the first line or first quoted phrase.
+      console.warn('Capture: JSON parse failed, using raw text fallback.', e);
+      let fallbackTitle = 'Captured memory';
+      const firstLine = raw.split('\n').find(l => l.trim().length > 5 && l.trim().length < 80);
+      if (firstLine) fallbackTitle = firstLine.trim().replace(/^["#*]+|["*]+$/g, '').slice(0, 60);
+      parsed = { name: fallbackTitle, keywords: [], content: raw };
+    }
 
     // Hold as draft — NOT pushed to state.memories
     pendingMemoryDraft = {
