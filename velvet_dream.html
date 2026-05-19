@@ -543,6 +543,11 @@ html, body {
           <div class="form-group"><label>Supabase URL</label><input type="text" id="supabaseUrlInput" placeholder="https://xxxxx.supabase.co"><div class="hint">Project Settings → API → Project URL</div></div>
           <div class="form-group"><label>Supabase Anon Key</label><div class="api-key-wrapper"><input type="password" id="supabaseKeyInput" placeholder="eyJ..." autocomplete="off"><button class="toggle-visibility" onclick="toggleSupabaseKeyVis()">👁</button></div></div>
           <button class="save-btn" style="margin-bottom:12px" onclick="saveSupabaseConfig()">Save Supabase & Reconnect</button>
+          <div id="accountStatus" style="display:none;margin-top:12px;padding:12px;background:var(--bg-tertiary);border-radius:var(--radius-sm);border:1px solid var(--border)">
+            <div style="font-size:11px;color:var(--text-muted);margin-bottom:4px">Signed in as</div>
+            <div id="accountEmail" style="font-size:13px;color:var(--text-primary);word-break:break-all;margin-bottom:10px"></div>
+            <button class="action-btn" onclick="handleLogout()" style="border-color:var(--danger);color:var(--danger);width:100%">Sign Out</button>
+          </div>
         </div>
       </div>
       <div class="section-divider" onclick="toggleSection('paramsSection',this)"><span class="toggle-arrow collapsed">▼</span> Sampling Parameters</div>
@@ -1608,14 +1613,21 @@ async function captureMemoryFromMessage(idx, btn) {
 
 Your job is to build a memory fragment around the marked anchor.
 
-ANCHOR — Copy the exact words from the anchor message (1-3 lines, trim only if very long). Do not paraphrase. Do not summarize. The anchor IS what was said in the marked message.
+Output exactly this structure, in this exact order, with each label on its own line:
 
-LEAD-UP — 2-3 sentences summarizing what led to this moment. Use the messages before the anchor. What was the dynamic, what made this moment arrive.
+TITLE: a short title anchored to the key moment
+KEYWORDS: 5-8 comma-separated keywords for retrieval
+---
+ANCHOR
+"exact words from the anchor message — copy verbatim, do not paraphrase, 1-3 lines"
 
-AFTERMATH — 2-3 sentences on what happened after, OR if the anchor is the most recent message, what this moment opens up. Use the messages after the anchor if any exist. Include any takeaway — something ${aiName} should carry forward into future conversations.
+LEAD-UP
+2-3 sentences summarizing what led to this moment. Use the messages before the anchor. What was the dynamic, what made this moment arrive.
 
-Return ONLY a JSON object with this exact format, no markdown, no backticks:
-{"name": "short title anchored to the key moment", "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"], "content": "ANCHOR\\n\\"exact quote from anchor message\\"\\n\\nLEAD-UP\\ncompressed context here\\n\\nAFTERMATH\\nwhat shifted and what to carry forward"}
+AFTERMATH
+2-3 sentences on what shifted after, OR if the anchor is the most recent message, what this moment opens up. Include any takeaway — something ${aiName} should carry forward into future conversations.
+
+Do not add any other text before TITLE or after the AFTERMATH section. Do not wrap in JSON. Do not use markdown headers. Use the exact format above.
 
 Conversation window (${window.length} messages):
 ${transcript}`;
@@ -1640,15 +1652,39 @@ ${transcript}`;
 
     const data = await resp.json();
     let raw = data.choices?.[0]?.message?.content || '';
-    raw = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-    const parsed = JSON.parse(raw);
+    raw = raw.replace(/```\w*\s*/g, '').replace(/```/g, '').trim();
+
+    // Parse labeled output: TITLE / KEYWORDS / --- / content body
+    let title = 'Captured memory';
+    let keywords = [];
+    let content = raw;
+
+    const titleMatch = raw.match(/^TITLE:\s*(.+)$/m);
+    if (titleMatch) title = titleMatch[1].trim();
+
+    const keywordsMatch = raw.match(/^KEYWORDS:\s*(.+)$/m);
+    if (keywordsMatch) {
+      keywords = keywordsMatch[1].split(',').map(k => k.trim().toLowerCase()).filter(k => k && k.length < 50).slice(0, 8);
+    }
+
+    // Content is everything after the --- separator (or fall back to raw if no separator found)
+    const sepIdx = raw.indexOf('---');
+    if (sepIdx >= 0) {
+      content = raw.slice(sepIdx + 3).trim();
+    } else {
+      // No separator — strip TITLE: and KEYWORDS: lines and use the rest
+      content = raw
+        .replace(/^TITLE:.*$/m, '')
+        .replace(/^KEYWORDS:.*$/m, '')
+        .trim();
+    }
 
     // Hold as draft — NOT pushed to state.memories
     pendingMemoryDraft = {
-      name: (parsed.name || 'Captured memory').slice(0, 60),
+      name: title.slice(0, 60),
       priority: 'medium',
-      keywords: (parsed.keywords || []).map(k => k.toLowerCase().trim()).filter(k => k),
-      content: parsed.content || raw,
+      keywords,
+      content,
       enabled: true,
       pinned: false,
     };
@@ -1885,6 +1921,14 @@ function openSettings() {
   document.getElementById('apiKeyInput').value = state.apiKey;
   document.getElementById('supabaseUrlInput').value = localStorage.getItem('haven_supabase_url') || '';
   document.getElementById('supabaseKeyInput').value = localStorage.getItem('haven_supabase_key') || '';
+  // Account status — show signed-in email + sign out button when logged in
+  const accountStatus = document.getElementById('accountStatus');
+  if (currentUser && currentUser.email) {
+    document.getElementById('accountEmail').textContent = currentUser.email;
+    accountStatus.style.display = 'block';
+  } else {
+    accountStatus.style.display = 'none';
+  }
   document.getElementById('systemPromptInput').value = state.systemPrompt;
   document.getElementById('userLabelInput').value = state.userLabel || 'You';
   document.getElementById('aiLabelInput').value = state.aiLabel || 'Kai';
