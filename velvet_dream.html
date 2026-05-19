@@ -1611,25 +1611,18 @@ async function captureMemoryFromMessage(idx, btn) {
 
     const capturePrompt = `You are a memory archivist for an AI character named ${aiName}. Below is a window of conversation between ${userName} and ${aiName}. The message marked ◀ ANCHOR is the moment that matters — ${userName} has chosen this specific beat to preserve. You do NOT decide what the anchor is. The anchor is fixed.
 
-Your job is to build a memory fragment around the marked anchor.
+Your job is to build a memory fragment around the marked anchor. The structure is:
 
-Output exactly this structure. Begin your response with TITLE on the first line, KEYWORDS on the second line, then a blank line, then the body:
+ANCHOR — The exact quote from the anchor message (1-3 lines, trim only if very long). Copy the actual words. Do not paraphrase. Do not summarize.
 
-TITLE: a short title anchored to the key moment
-KEYWORDS: 5-8 comma-separated keywords for retrieval
+LEAD-UP — 2-3 sentences summarizing what led to this moment. Use the messages before the anchor. What was the dynamic, what made this moment arrive.
 
-ANCHOR
-"exact words from the anchor message — copy verbatim, do not paraphrase, 1-3 lines"
+AFTERMATH — 2-3 sentences on what shifted after, OR if the anchor is the most recent message, what this moment opens up. Include any takeaway — something ${aiName} should carry forward into future conversations.
 
-LEAD-UP
-2-3 sentences summarizing what led to this moment. Use the messages before the anchor. What was the dynamic, what made this moment arrive.
+IMPORTANT: Generate LEAD-UP and AFTERMATH only if there is meaningful narrative around the anchor. If the anchor is a pure factual statement (a name, a preference, a piece of information being shared), output only the ANCHOR section in the content field. Do not invent narrative.
 
-AFTERMATH
-2-3 sentences on what shifted after, OR if the anchor is the most recent message, what this moment opens up. Include any takeaway — something ${aiName} should carry forward into future conversations.
-
-IMPORTANT: Generate LEAD-UP and AFTERMATH only if there is meaningful narrative around the anchor. If the anchor is a pure factual statement with no surrounding dynamic (a name, a preference, a piece of information being shared), output only the ANCHOR section and stop. Do not invent narrative.
-
-Do not wrap in JSON. Do not use markdown headers (no # symbols). Do not use --- separators. Just the labels above as written.
+Return ONLY a JSON object with this exact format, no markdown, no backticks:
+{"name": "short title anchored to the key moment", "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"], "content": "ANCHOR\\n\\"exact quote from anchor message\\"\\n\\nLEAD-UP\\ncompressed context here\\n\\nAFTERMATH\\nwhat shifted and what to carry forward"}
 
 Conversation window (${window.length} messages):
 ${transcript}`;
@@ -1654,39 +1647,18 @@ ${transcript}`;
 
     const data = await resp.json();
     let raw = data.choices?.[0]?.message?.content || '';
-    raw = raw.replace(/```\w*\s*/g, '').replace(/```/g, '').trim();
 
-    // Parse: TITLE line, KEYWORDS line, then everything else is content
-    let title = 'Captured memory';
-    let keywords = [];
+    // Clean up potential markdown fences
+    raw = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
 
-    const titleMatch = raw.match(/^TITLE:\s*(.+)$/m);
-    if (titleMatch) title = titleMatch[1].trim();
-
-    const keywordsMatch = raw.match(/^KEYWORDS:\s*(.+)$/m);
-    if (keywordsMatch) {
-      keywords = keywordsMatch[1].split(',').map(k => k.trim().toLowerCase()).filter(k => k && k.length < 50).slice(0, 8);
-    }
-
-    // Content is the raw output with the TITLE: and KEYWORDS: lines removed,
-    // and any stray --- lines cleaned out. Whatever remains is the memory body.
-    let content = raw
-      .replace(/^TITLE:.*$/m, '')
-      .replace(/^KEYWORDS:.*$/m, '')
-      .replace(/^---\s*$/gm, '')
-      .trim();
-
-    // Final safety: if for any reason content ended up very short, use the raw output
-    if (!content || content.length < 20) {
-      content = raw;
-    }
+    const parsed = JSON.parse(raw);
 
     // Hold as draft — NOT pushed to state.memories
     pendingMemoryDraft = {
-      name: title.slice(0, 60),
+      name: (parsed.name || 'Captured memory').slice(0, 60),
       priority: 'medium',
-      keywords,
-      content,
+      keywords: (parsed.keywords || []).map(k => k.toLowerCase().trim()).filter(k => k),
+      content: parsed.content || raw,
       enabled: true,
       pinned: false,
     };
