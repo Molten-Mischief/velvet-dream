@@ -603,6 +603,16 @@ html, body {
           <div class="hint" style="margin-top:6px">JSON for re-importing. Markdown for reading or feeding to a model.</div>
         </div>
       </div>
+      <div class="section-divider" onclick="toggleSection('memImportSection',this)" style="margin-top:8px"><span class="toggle-arrow collapsed">▼</span> Import Memory Fragments</div>
+      <div class="collapsible-section collapsed" id="memImportSection">
+        <div style="padding-top:12px">
+          <div class="action-row">
+            <button class="action-btn" onclick="document.getElementById('memFragmentFile').click()">Import Markdown</button>
+            <input type="file" id="memFragmentFile" accept=".md,text/markdown,text/plain" style="display:none" onchange="importMemoryFragments(event)">
+          </div>
+          <div class="hint" style="margin-top:6px">Imports a .md file of fragments (## Title, then Context/Moment/Why this matters). Adds to existing memories — does not replace. Keywords auto-generated per card.</div>
+        </div>
+      </div>
       <button class="save-btn" onclick="saveMemorySettings()">Save Memory Settings</button>
     </div>
   </div>
@@ -2194,6 +2204,138 @@ function deleteMemory(id) {
   saveState();
   renderMemoryCards();
   showToast('Deleted', false);
+}
+
+// ===== MEMORY FRAGMENT IMPORT =====
+// Parses a Markdown file of memory fragments into card drafts.
+// Expected format per fragment:
+//   ## Title
+//   **Context.** ... text ...
+//   **Moment.** ... text ...
+//   **Why this one matters.** ... text ...
+//
+// Fragments separated by `---` or another H2.
+// Header content above the first H2 is ignored.
+
+function parseMemoryFragments(markdown) {
+  // Strip the leading document header if present (everything before first ##)
+  const firstH2 = markdown.search(/^##\s/m);
+  const body = firstH2 >= 0 ? markdown.slice(firstH2) : markdown;
+
+  // Split into chunks at every H2 heading
+  const chunks = body.split(/^(?=##\s)/m).map(c => c.trim()).filter(c => c.startsWith('## '));
+
+  const fragments = [];
+  for (const chunk of chunks) {
+    // Title is the first line after "## "
+    const titleMatch = chunk.match(/^##\s+(.+?)$/m);
+    if (!titleMatch) continue;
+    let title = titleMatch[1].trim();
+    // Strip leading number/dot/space ("1. " or "10. ") if present
+    title = title.replace(/^\d+\.\s*/, '').trim();
+
+    // Strip any trailing --- and surrounding whitespace
+    const cleanChunk = chunk.replace(/^---\s*$/gm, '').trim();
+
+    // Build the content body: everything from after the title line forward
+    let content = cleanChunk.split('\n').slice(1).join('\n').trim();
+
+    // Skip empty fragments
+    if (!content || content.length < 20) continue;
+
+    fragments.push({ title, content });
+  }
+  return fragments;
+}
+
+// Generate keywords for a fragment using the configured model.
+async function generateKeywords(title, content) {
+  if (!state.apiKey) return [];
+  try {
+    const prompt = `You are tagging a memory fragment for a relationship between an AI character and their user. Give me 5-8 keyword tags that would help retrieve this memory when relevant topics come up in future conversation. Keywords should be specific words or short phrases that would actually appear in conversation — not abstract themes. Output ONLY a comma-separated list, no other text.
+
+Title: ${title}
+
+Content:
+${content}`;
+
+    const chat = getActiveChat();
+    const model = chat?.model || DEFAULT_MODELS[0].id;
+
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${state.apiKey}`,
+        'HTTP-Referer': 'https://kai.app',
+        'X-Title': 'Kai Memory Import'
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.3,
+        max_tokens: 100
+      })
+    });
+
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    const raw = data.choices?.[0]?.message?.content || '';
+    return raw.split(',').map(k => k.trim().toLowerCase()).filter(k => k && k.length < 50).slice(0, 8);
+  } catch (e) {
+    console.warn('Keyword generation failed:', e);
+    return [];
+  }
+}
+
+async function importMemoryFragments(event) {
+  const file = event.target.files[0];
+  if (!file) return;
+  event.target.value = '';
+
+  if (!file.name.toLowerCase().endsWith('.md') && file.type !== 'text/markdown' && file.type !== 'text/plain') {
+    showToast('File must be markdown (.md)');
+    return;
+  }
+
+  const text = await file.text();
+  const fragments = parseMemoryFragments(text);
+
+  if (!fragments.length) {
+    showToast('No memory fragments found — check format');
+    return;
+  }
+
+  if (!confirm(`Found ${fragments.length} fragment${fragments.length === 1 ? '' : 's'}. Import as memory cards? Keywords will be auto-generated using your current model (small API cost per card).`)) {
+    return;
+  }
+
+  if (!state.apiKey) {
+    if (!confirm('No API key set — cards will be imported without auto-generated keywords. Continue?')) return;
+  }
+
+  showToast(`Importing ${fragments.length} cards…`, false);
+
+  let added = 0;
+  for (const f of fragments) {
+    const keywords = state.apiKey ? await generateKeywords(f.title, f.content) : [];
+    state.memories.push({
+      id: 'mem_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      name: f.title.slice(0, 80),
+      priority: 'medium',
+      keywords,
+      content: f.content,
+      enabled: true,
+      pinned: false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+    added++;
+  }
+
+  saveState();
+  renderMemoryCards();
+  showToast(`Imported ${added} memory card${added === 1 ? '' : 's'}`, false);
 }
 
 // ===== EXPORT/IMPORT =====
