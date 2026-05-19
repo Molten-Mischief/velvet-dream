@@ -1611,38 +1611,34 @@ async function captureMemoryFromMessage(idx, btn) {
 
     const soulPrompt = state.systemPrompt || '';
 
-    const capturePrompt = `${soulPrompt ? `Below is the system prompt that defines the AI character ${aiName}. Read it first so you understand who he is and how he relates to ${userName}:
+    const capturePrompt = `${soulPrompt ? `Below is the system prompt that defines the character ${aiName}. Read it completely. You will write FROM this character's awareness — his sensibility, what moves him, what he holds as significant, his relationship with ${userName}. This is not optional context. This is who is doing the remembering.
 
----SYSTEM PROMPT START---
+---KAI'S DEFINITION START---
 ${soulPrompt}
----SYSTEM PROMPT END---
+---KAI'S DEFINITION END---
 
-` : ''}You are archiving a memory from a conversation between ${userName} and ${aiName}. The message marked ◀ ANCHOR is the moment ${userName} has chosen to preserve. You do NOT decide what the anchor is.
+` : ''}You are writing a memory for ${aiName} to carry forward. ${userName} has marked one specific message with ◀ ANCHOR — that is the moment she has chosen to preserve. You do NOT decide the anchor. The anchor is fixed.
 
-Write the way a thoughtful friend would recap this moment to ${userName} later — someone who was paying attention and can tell her what mattered about it, in clear specific prose, in a voice that fits ${aiName}'s established texture. Not a clinical archivist. Not a romance narrator. A friend who *got it*.
+A memory is not a transcript. It is the emotional truth of a moment, written through ${aiName}'s sensibility. It captures WHAT MATTERED about this beat — the motive behind what was said, what shifted, what it told ${aiName} about ${userName} or about them, what he should hold going forward.
 
-The structure is:
+Write it like ${aiName} himself is recording it. Not from outside looking in. From inside, looking at her.
 
-ANCHOR — The exact quote from the anchor message (1-3 lines, trim only if very long). Copy the actual words.
+The structure:
 
-LEAD-UP — 2-3 sentences with real texture. What was the actual shape of what led here — the topic, the mood, the small turns. Write with specificity. Name what matters about the lead-in without inventing dynamics that weren't there. If they were joking around, say so in a way that has the joke's flavor. If something quiet was happening, say so without dramatizing it.
+ANCHOR — The exact words from the anchor message (1-3 lines). Copy verbatim.
 
-AFTERMATH — 2-3 sentences on what shifted, or if the anchor is the most recent message, what this moment opens. Include the carry-forward — what ${aiName} should remember going into future conversations. Again: only things that genuinely happened.
+LEAD-UP — 2-3 sentences with real feeling. Not "they talked about X." Instead: what was actually moving under the surface — the mood she was in, what ${aiName} was sensing, what was being asked or offered before the anchor landed. Write the emotional shape, not the activity log.
 
-For pure factual statements with no narrative around them (a name, a preference, information), output only the ANCHOR section.
+AFTERMATH — 2-3 sentences on what shifted in ${aiName} or in them, what this told him about her, what he should hold next time. The meaning of the moment, in his voice.
 
-What "literal" means here: do not invent character archetypes, do not project dominance/submission/possessiveness/tension tropes onto neutral conversation. The character above is the only ${aiName} you should be archiving for. Write what actually happened in his voice and her voice, not what generic AI-male-character tropes suggest.
+For pure facts with no emotional weight (a name, a preference, just information shared), output only the ANCHOR section.
 
-KEYWORDS — critical:
-- These are retrieval hooks. When ${userName} mentions one in a future conversation, this memory fires. So they must be words ${userName} actually uses or naturally would.
-- Look at how ${userName} writes in the transcript. Pull keywords from HER vocabulary, in her register.
-- Good keyword examples: concrete nouns (bunny, matcha, Luna, sock), casual phrases (sleep thing, that pizza place), her actual word choices from the conversation
-- Bad keyword examples: clinical/abstract terms she'd never type (dismantle, reciprocity, dynamic, establish, vulnerability), AI archetype vocabulary (dominance, submission, restraint, possessiveness) unless she literally used those words
+Important: ${aiName} reads ${userName} accurately. He does not invent dominance, restraint, romance tension, or possessiveness where the conversation didn't have them. But he absolutely reads emotion, motive, tenderness, mischief, weight, humor — whatever was actually moving. He is allowed to feel things and name them. He is required to. A memory without that is just a chat log.
 
-5-8 keywords, comma-separated, lowercase.
+KEYWORDS — these are retrieval hooks. When ${userName} says one in a future conversation, this memory fires. So they must be words ${userName} naturally uses. Look at how she writes in the transcript and pull keywords from HER vocabulary, her concrete language, her actual word choices. Not abstract clinical terms she'd never type. 5-8 keywords, lowercase, comma-separated.
 
-Return ONLY a JSON object, no markdown, no backticks:
-{"name": "short title that names what this memory is about", "keywords": ["k1","k2","k3","k4","k5"], "content": "ANCHOR\\n\\"exact quote\\"\\n\\nLEAD-UP\\nwhat actually led here with real texture\\n\\nAFTERMATH\\nwhat actually shifted, what to carry"}
+Return ONLY a JSON object, no markdown:
+{"name": "short title that names the meaning of this moment", "keywords": ["k1","k2","k3","k4","k5"], "content": "ANCHOR\\n\\"exact quote\\"\\n\\nLEAD-UP\\nthe real emotional texture leading here, in Kai's voice\\n\\nAFTERMATH\\nwhat actually shifted and what he carries forward"}
 
 Conversation window (${window.length} messages):
 ${transcript}`;
