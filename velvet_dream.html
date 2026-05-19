@@ -1611,18 +1611,26 @@ async function captureMemoryFromMessage(idx, btn) {
 
     const capturePrompt = `You are a memory archivist for an AI character named ${aiName}. Below is a window of conversation between ${userName} and ${aiName}. The message marked ◀ ANCHOR is the moment that matters — ${userName} has chosen this specific beat to preserve. You do NOT decide what the anchor is. The anchor is fixed.
 
-Your job is to build a memory fragment around the marked anchor. The structure is:
+Your job is to build a memory fragment around the marked anchor. Be literal. Do not interpret subtext, do not infer power dynamics, do not project romance/tension/intensity tropes onto neutral conversation. Describe only what literally happened, in plain language.
 
-ANCHOR — The exact quote from the anchor message (1-3 lines, trim only if very long). Copy the actual words. Do not paraphrase. Do not summarize.
+The structure is:
 
-LEAD-UP — 2-3 sentences summarizing what led to this moment. Use the messages before the anchor. What was the dynamic, what made this moment arrive.
+ANCHOR — The exact quote from the anchor message (1-3 lines, trim only if very long). Copy the actual words. Do not paraphrase.
 
-AFTERMATH — 2-3 sentences on what shifted after, OR if the anchor is the most recent message, what this moment opens up. Include any takeaway — something ${aiName} should carry forward into future conversations.
+LEAD-UP — 2-3 sentences plainly summarizing what led to this moment, based ONLY on what the messages actually say. If the messages were casual, say casual. If they discussed a topic, name the topic. Do not add dramatic framing.
 
-IMPORTANT: Generate LEAD-UP and AFTERMATH only if there is meaningful narrative around the anchor. If the anchor is a pure factual statement (a name, a preference, a piece of information being shared), output only the ANCHOR section in the content field. Do not invent narrative.
+AFTERMATH — 2-3 sentences plainly summarizing what shifted after, OR if the anchor is the most recent message, what topic this opens. Include any takeaway — but only if the conversation contained one. Do not invent significance.
+
+IMPORTANT — Generate LEAD-UP and AFTERMATH only if there is meaningful narrative around the anchor. If the anchor is a pure factual statement (a name, a preference, a piece of information being shared), output only the ANCHOR section in the content field. Do not invent narrative.
+
+KEYWORDS RULES:
+- Use words that literally appear in the conversation, or simple descriptive terms for the topic
+- DO NOT add interpretive words like: dominance, submission, tension, restraint, defiance, intensity, vulnerability, power dynamic, teasing, possessive, etc. unless those exact concepts were explicitly stated
+- If the conversation is about everyday topics (food, bunnies, plans, weather, work), keywords should reflect those everyday topics
+- 5-8 keywords, comma-separated, lowercase
 
 Return ONLY a JSON object with this exact format, no markdown, no backticks:
-{"name": "short title anchored to the key moment", "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"], "content": "ANCHOR\\n\\"exact quote from anchor message\\"\\n\\nLEAD-UP\\ncompressed context here\\n\\nAFTERMATH\\nwhat shifted and what to carry forward"}
+{"name": "short factual title describing the moment", "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"], "content": "ANCHOR\\n\\"exact quote from anchor message\\"\\n\\nLEAD-UP\\nplain factual context\\n\\nAFTERMATH\\nwhat actually shifted"}
 
 Conversation window (${window.length} messages):
 ${transcript}`;
