@@ -1054,6 +1054,9 @@ function switchChat(id) {
   pendingImages = [];
   document.getElementById('imagePreviewRow').innerHTML = '';
   syncModelDropdown();
+  // Clear info bar — different chat, different state
+  lastInfoBarMemories = [];
+  updateInfoBar([], null);
   saveState(); renderChatList(); renderMessages();
 }
 
@@ -1494,6 +1497,25 @@ async function sendMessage() {
     // Swap info bar to show response token count
     if (completionTokens > 0) {
       updateInfoBar([], completionTokens, 'received');
+      // Auto-clear after 6 seconds so the bar doesn't linger
+      setTimeout(() => {
+        // Only clear if state hasn't moved on (next send didn't happen)
+        const bar = document.getElementById('infoBar');
+        const badge = document.getElementById('tokenBadge');
+        if (bar && badge && badge.textContent.includes('↓')) {
+          bar.style.transition = 'opacity 0.6s ease';
+          bar.style.opacity = '0';
+          setTimeout(() => {
+            bar.classList.remove('visible');
+            bar.style.opacity = '';
+            bar.style.transition = '';
+            lastInfoBarMemories = [];
+            const left = document.getElementById('infoBarLeft');
+            if (left) left.innerHTML = '';
+            badge.textContent = '';
+          }, 600);
+        }
+      }, 6000);
     }
 
   } catch (err) {
@@ -1520,9 +1542,12 @@ function stopStreaming() {
 function renderMessages() {
   const area = document.getElementById('chatArea');
   const chat = getActiveChat();
-  updateInfoBar([], null);
+  // Info bar state is managed by send/receive flow, not by renders
 
   if (!chat || !chat.messages.length) {
+    // Empty/welcome state — clear the info bar since there's no active turn
+    lastInfoBarMemories = [];
+    updateInfoBar([], null);
     const av = state.welcomeAvatar ? `<img class="welcome-avatar" src="${state.welcomeAvatar}">` : '';
     const sync = currentUser ? '<div class="sync-status online">☁ Synced</div>' : (isOfflineMode ? '<div class="sync-status offline">Offline</div>' : '');
     area.innerHTML = `<div class="welcome">${av}<div class="welcome-logo">Velvet Dream</div><div class="welcome-sub">Your space. Pick a model, write, begin.</div>${sync}</div>`;
