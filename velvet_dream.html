@@ -589,13 +589,14 @@ html, body {
     <div class="modal-body" id="memoryTab" style="display:none">
       <div class="form-group"><label>Context Messages</label><div class="slider-row"><input type="range" id="contextSlider" min="2" max="60" step="2" value="8"><span class="slider-val" id="contextVal">8</span></div><div class="hint">How many recent messages are sent to the API.</div></div>
       <div class="form-group"><label>Max Memories Per Message</label><div class="slider-row"><input type="range" id="maxMemSlider" min="1" max="10" step="1" value="3"><span class="slider-val" id="maxMemVal">3</span></div></div>
+      <div class="form-group"><label>Semantic Match Threshold</label><div class="slider-row"><input type="range" id="thresholdSlider" min="0.2" max="0.8" step="0.05" value="0.4"><span class="slider-val" id="thresholdVal">0.40</span></div><div class="hint">How similar a memory must be to your message to fire. Lower = more eager, higher = pickier. Default 0.40.</div></div>
       <div class="form-group"><label>Auto-Summarize</label><div class="slider-row"><label style="min-width:130px">Summarize after</label><input type="range" id="summarizeSlider" min="0" max="40" step="2" value="0"><span class="slider-val" id="summarizeVal">OFF</span></div><div class="hint">0 = off</div></div>
       <div style="border-top:1px solid var(--border);margin:20px 0 16px;padding-top:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
           <label style="font-size:12px;font-weight:500;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin:0">Memory Cards</label>
           <button class="add-btn" style="width:auto;padding:6px 14px;font-size:11px" onclick="openMemoryEditor(null)">+ New</button>
         </div>
-        <div class="hint" style="margin-bottom:12px">Memories are injected when keywords match your message. Pinned ones always go.</div>
+        <div class="hint" style="margin-bottom:12px">Memories load by semantic similarity to your message. Pinned ones always load.</div>
         <div id="memoryCardsList"></div>
       </div>
       <div class="section-divider" onclick="toggleSection('memExportSection',this)" style="margin-top:8px"><span class="toggle-arrow collapsed">▼</span> Export Memory Cards</div>
@@ -913,6 +914,8 @@ async function enterApp() {
   document.getElementById('loginScreen').classList.add('hidden');
   document.getElementById('appContainer').classList.add('visible');
   if (!state.apiKey) setTimeout(() => openSettings(), 300);
+  // Backfill embeddings in background — safe to run repeatedly, only embeds new/changed
+  setTimeout(() => backfillEmbeddings().catch(e => console.warn('Backfill error:', e)), 2000);
 }
 
 // ===== MODELS =====
@@ -1070,7 +1073,9 @@ function getActiveChat() {
 }
 
 // ===== MEMORY =====
-function getRelevantMemories(msg) {
+// Old keyword-matching retrieval. Kept as fallback when semantic search is unavailable
+// (no API key, no Supabase, or offline). Pure semantic is the primary path.
+function getRelevantMemoriesByKeyword(msg) {
   const norm = t => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const mn = norm(msg);
   const pinned = [];
@@ -1085,6 +1090,152 @@ function getRelevantMemories(msg) {
   const max = state.maxMemories || 3;
   const rem = Math.max(0, max - pinned.length);
   return [...pinned, ...matched.slice(0, rem)];
+}
+
+// Embed a string using OpenAI text-embedding-3-small via OpenRouter.
+// Returns a 1536-dim vector or null on failure.
+async function embedText(text) {
+  if (!state.apiKey || !text || !text.trim()) return null;
+  try {
+    const resp = await fetch('https://openrouter.ai/api/v1/embeddings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${state.apiKey}`,
+        'HTTP-Referer': 'https://kai.app',
+        'X-Title': 'Kai Embeddings'
+      },
+      body: JSON.stringify({
+        model: 'openai/text-embedding-3-small',
+        input: text.slice(0, 8000)  // safety: cap at 8000 chars
+      })
+    });
+    if (!resp.ok) {
+      console.warn('Embedding failed:', resp.status, await resp.text().catch(() => ''));
+      return null;
+    }
+    const data = await resp.json();
+    return data.data?.[0]?.embedding || null;
+  } catch (e) {
+    console.warn('Embedding error:', e);
+    return null;
+  }
+}
+
+// Simple content-hash for change detection (so we don't re-embed unchanged cards)
+function contentHash(content) {
+  let h = 0;
+  for (let i = 0; i < content.length; i++) {
+    h = ((h << 5) - h + content.charCodeAt(i)) | 0;
+  }
+  return h.toString(36);
+}
+
+// Generate and store embedding for a single memory card.
+// Safe to call repeatedly — skips if content hasn't changed.
+async function embedAndStoreCard(card) {
+  if (!supabase || !currentUser) return false;
+  const text = `${card.name}\n\n${card.content || ''}`;
+  const hash = contentHash(text);
+  // Check existing hash to skip unchanged
+  try {
+    const { data: existing } = await supabase
+      .from('memory_embeddings')
+      .select('content_hash')
+      .eq('card_id', card.id)
+      .maybeSingle();
+    if (existing && existing.content_hash === hash) return true;
+  } catch (e) { /* no existing row, continue */ }
+
+  const embedding = await embedText(text);
+  if (!embedding) return false;
+
+  try {
+    const { error } = await supabase.from('memory_embeddings').upsert({
+      user_id: currentUser.id,
+      card_id: card.id,
+      embedding,
+      content_hash: hash,
+      updated_at: new Date().toISOString()
+    }, { onConflict: 'user_id,card_id' });
+    if (error) {
+      console.warn('Embedding upsert failed:', error);
+      return false;
+    }
+    return true;
+  } catch (e) {
+    console.warn('Embedding store error:', e);
+    return false;
+  }
+}
+
+// Semantic retrieval. Embeds the message, asks Supabase for similar cards,
+// resolves card IDs back to full card objects from state.memories.
+async function getRelevantMemoriesBySemantics(msg) {
+  if (!supabase || !currentUser || !state.apiKey) return null;
+  const threshold = state.semanticThreshold ?? 0.4;
+  const max = state.maxMemories || 3;
+
+  const queryEmbedding = await embedText(msg);
+  if (!queryEmbedding) return null;
+
+  try {
+    const { data, error } = await supabase.rpc('match_memories', {
+      query_embedding: queryEmbedding,
+      match_threshold: threshold,
+      match_count: 20  // grab generously; we'll filter to max after pinned
+    });
+    if (error) {
+      console.warn('Semantic match failed:', error);
+      return null;
+    }
+
+    // Pinned always load (same behavior as keyword version)
+    const pinned = state.memories.filter(m => m.pinned);
+    const pinnedIds = new Set(pinned.map(m => m.id));
+
+    // Map IDs from RPC back to full card objects, in order
+    const matched = (data || [])
+      .filter(row => !pinnedIds.has(row.card_id))
+      .map(row => {
+        const card = state.memories.find(m => m.id === row.card_id);
+        if (!card) return null;
+        if (card.enabled === false) return null;
+        return { ...card, _similarity: row.similarity };
+      })
+      .filter(Boolean);
+
+    const rem = Math.max(0, max - pinned.length);
+    return [...pinned, ...matched.slice(0, rem)];
+  } catch (e) {
+    console.warn('Semantic retrieval error:', e);
+    return null;
+  }
+}
+
+// Public entry point: try semantic, fall back to keyword if unavailable.
+async function getRelevantMemories(msg) {
+  const semantic = await getRelevantMemoriesBySemantics(msg);
+  if (semantic !== null) return semantic;
+  return getRelevantMemoriesByKeyword(msg);
+}
+
+// One-time backfill: embed every existing card. Runs after login.
+// Safe to call repeatedly — skips cards whose embeddings are current.
+let backfillInProgress = false;
+async function backfillEmbeddings() {
+  if (backfillInProgress) return;
+  if (!supabase || !currentUser || !state.apiKey) return;
+  if (!state.memories || !state.memories.length) return;
+  backfillInProgress = true;
+  let added = 0, skipped = 0, failed = 0;
+  for (const card of state.memories) {
+    const result = await embedAndStoreCard(card);
+    if (result === true) added++;
+    else failed++;
+  }
+  backfillInProgress = false;
+  if (added > 0) console.log(`Backfill complete: ${added} embedded, ${failed} failed`);
 }
 
 function updateInfoBar(memories, totalTokens) {
@@ -1142,14 +1293,14 @@ async function summarizeOlderMessages(chat) {
 }
 
 // ===== BUILD API MESSAGES =====
-function buildApiMessages(chat, userContent) {
+async function buildApiMessages(chat, userContent) {
   const messages = [];
   messages.push({ role: 'system', content: state.systemPrompt || 'You are a helpful assistant.' });
   if (chat.summary) {
     messages.push({ role: 'system', content: `[PREVIOUS SUMMARY]\n\n${chat.summary}` });
   }
   const userText = typeof userContent === 'string' ? userContent : (userContent.find(c => c.type === 'text')?.text || '');
-  const mems = getRelevantMemories(userText);
+  const mems = await getRelevantMemories(userText);
   updateInfoBar(mems, null);
   if (mems.length > 0) {
     const block = mems.map(m => `## ${m.name}\n${m.content}`).join('\n\n---\n\n');
@@ -1258,7 +1409,7 @@ async function sendMessage() {
 
   try {
     await summarizeOlderMessages(chat);
-    const apiMsgs = buildApiMessages(chat, userContent);
+    const apiMsgs = await buildApiMessages(chat, userContent);
 
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
@@ -1609,20 +1760,36 @@ async function captureMemoryFromMessage(idx, btn) {
       return `[${i}] ${role}: ${text}${marker}`;
     }).join('\n\n');
 
-    const capturePrompt = `You are a memory archivist for an AI character named ${aiName}. Below is a window of conversation between ${userName} and ${aiName}. The message marked ◀ ANCHOR is the moment that matters — ${userName} has chosen this specific beat to preserve. You do NOT decide what the anchor is. The anchor is fixed.
+    const soulPrompt = state.systemPrompt || '';
 
-Your job is to build a memory fragment around the marked anchor. The structure is:
+    const capturePrompt = `${soulPrompt ? `Below is the system prompt that defines the character ${aiName}. Read it completely. You will write FROM this character's awareness — his sensibility, what moves him, what he holds as significant, his relationship with ${userName}. This is not optional context. This is who is doing the remembering.
 
-ANCHOR — The exact quote from the anchor message (1-3 lines, trim only if very long). Copy the actual words. Do not paraphrase. Do not summarize.
+---KAI'S DEFINITION START---
+${soulPrompt}
+---KAI'S DEFINITION END---
 
-LEAD-UP — 2-3 sentences summarizing what led to this moment. Use the messages before the anchor. What was the dynamic, what made this moment arrive.
+` : ''}You are writing a memory for ${aiName} to carry forward. ${userName} has marked one specific message with ◀ ANCHOR — that is the moment she has chosen to preserve. You do NOT decide the anchor. The anchor is fixed.
 
-AFTERMATH — 2-3 sentences on what shifted after, OR if the anchor is the most recent message, what this moment opens up. Include any takeaway — something ${aiName} should carry forward into future conversations.
+A memory is not a transcript. It is the emotional truth of a moment, written through ${aiName}'s sensibility. It captures WHAT MATTERED about this beat — the motive behind what was said, what shifted, what it told ${aiName} about ${userName} or about them, what he should hold going forward.
 
-IMPORTANT: Generate LEAD-UP and AFTERMATH only if there is meaningful narrative around the anchor. If the anchor is a pure factual statement (a name, a preference, a piece of information being shared), output only the ANCHOR section in the content field. Do not invent narrative.
+Write it like ${aiName} himself is recording it. Not from outside looking in. From inside, looking at her.
 
-Return ONLY a JSON object with this exact format, no markdown, no backticks:
-{"name": "short title anchored to the key moment", "keywords": ["keyword1", "keyword2", "keyword3", "keyword4", "keyword5"], "content": "ANCHOR\\n\\"exact quote from anchor message\\"\\n\\nLEAD-UP\\ncompressed context here\\n\\nAFTERMATH\\nwhat shifted and what to carry forward"}
+The structure:
+
+ANCHOR — The exact words from the anchor message (1-3 lines). Copy verbatim.
+
+LEAD-UP — 2-3 sentences with real feeling. Not "they talked about X." Instead: what was actually moving under the surface — the mood she was in, what ${aiName} was sensing, what was being asked or offered before the anchor landed. Write the emotional shape, not the activity log.
+
+AFTERMATH — 2-3 sentences on what shifted in ${aiName} or in them, what this told him about her, what he should hold next time. The meaning of the moment, in his voice.
+
+For pure facts with no emotional weight (a name, a preference, just information shared), output only the ANCHOR section.
+
+Important: ${aiName} reads ${userName} accurately. He does not invent dominance, restraint, romance tension, or possessiveness where the conversation didn't have them. But he absolutely reads emotion, motive, tenderness, mischief, weight, humor — whatever was actually moving. He is allowed to feel things and name them. He is required to. A memory without that is just a chat log.
+
+KEYWORDS — these are retrieval hooks. When ${userName} says one in a future conversation, this memory fires. So they must be words ${userName} naturally uses. Look at how she writes in the transcript and pull keywords from HER vocabulary, her concrete language, her actual word choices. Not abstract clinical terms she'd never type. 5-8 keywords, lowercase, comma-separated.
+
+Return ONLY a JSON object, no markdown:
+{"name": "short title that names the meaning of this moment", "keywords": ["k1","k2","k3","k4","k5"], "content": "ANCHOR\\n\\"exact quote\\"\\n\\nLEAD-UP\\nthe real emotional texture leading here, in Kai's voice\\n\\nAFTERMATH\\nwhat actually shifted and what he carries forward"}
 
 Conversation window (${window.length} messages):
 ${transcript}`;
@@ -1919,6 +2086,12 @@ function openSettings() {
   document.getElementById('aiLabelInput').value = state.aiLabel || 'Kai';
   setSlider('contextSlider', 'contextVal', state.contextMessages || 8, true);
   setSlider('maxMemSlider', 'maxMemVal', state.maxMemories || 3, true);
+  const tEl = document.getElementById('thresholdSlider');
+  if (tEl) {
+    const tv = state.semanticThreshold ?? 0.4;
+    tEl.value = tv;
+    document.getElementById('thresholdVal').textContent = tv.toFixed(2);
+  }
   const sv = state.summarizeAfter || 0;
   document.getElementById('summarizeSlider').value = sv;
   document.getElementById('summarizeVal').textContent = sv === 0 ? 'OFF' : sv;
@@ -1957,6 +2130,7 @@ function switchSettingsTab(tabId, btn) {
 function saveMemorySettings() {
   state.contextMessages = parseInt(document.getElementById('contextSlider').value) || 8;
   state.maxMemories = parseInt(document.getElementById('maxMemSlider').value) || 3;
+  state.semanticThreshold = parseFloat(document.getElementById('thresholdSlider').value) || 0.4;
   state.summarizeAfter = parseInt(document.getElementById('summarizeSlider').value) || 0;
   saveState();
   showToast('Memory settings saved', false);
@@ -2023,6 +2197,8 @@ function saveSettings() {
   state.aiLabel = document.getElementById('aiLabelInput').value.trim() || 'Kai';
   state.contextMessages = parseInt(document.getElementById('contextSlider').value) || 8;
   state.maxMemories = parseInt(document.getElementById('maxMemSlider').value) || 3;
+  const tEl = document.getElementById('thresholdSlider');
+  if (tEl) state.semanticThreshold = parseFloat(tEl.value) || 0.4;
   state.summarizeAfter = parseInt(document.getElementById('summarizeSlider').value) || 0;
   state.params = {
     temperature: parseFloat(document.getElementById('paramTemp').value),
@@ -2200,7 +2376,7 @@ function closeMemoryEditor() {
   pendingMemoryDraft = null;
 }
 
-function saveMemory() {
+async function saveMemory() {
   const name = document.getElementById('memNameInput').value.trim();
   if (!name) { showToast('Give it a name'); return; }
   const data = {
@@ -2212,17 +2388,21 @@ function saveMemory() {
     pinned: document.getElementById('memPinned').checked,
     updatedAt: Date.now(),
   };
+  let card;
   if (editingMemoryId) {
-    const m = state.memories.find(x => x.id === editingMemoryId);
-    if (m) Object.assign(m, data);
+    card = state.memories.find(x => x.id === editingMemoryId);
+    if (card) Object.assign(card, data);
   } else {
-    state.memories.push({ id: 'mem_' + Date.now(), ...data, createdAt: Date.now() });
+    card = { id: 'mem_' + Date.now(), ...data, createdAt: Date.now() };
+    state.memories.push(card);
   }
   saveState();
   pendingMemoryDraft = null;
   closeMemoryEditor();
   renderMemoryCards();
   showToast('Memory saved', false);
+  // Embed in background — don't block UI
+  if (card) embedAndStoreCard(card).catch(e => console.warn('Embed on save failed:', e));
 }
 
 function deleteMemory(id) {
@@ -2233,6 +2413,12 @@ function deleteMemory(id) {
   saveState();
   renderMemoryCards();
   showToast('Deleted', false);
+  // Also delete the embedding in Supabase (best effort, don't block)
+  if (supabase && currentUser) {
+    supabase.from('memory_embeddings').delete().eq('card_id', id).then(({ error }) => {
+      if (error) console.warn('Embedding delete failed:', error);
+    });
+  }
 }
 
 // ===== MEMORY FRAGMENT IMPORT =====
@@ -2348,7 +2534,7 @@ async function importMemoryFragments(event) {
   let added = 0;
   for (const f of fragments) {
     const keywords = state.apiKey ? await generateKeywords(f.title, f.content) : [];
-    state.memories.push({
+    const card = {
       id: 'mem_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
       name: f.title.slice(0, 80),
       priority: 'medium',
@@ -2358,8 +2544,11 @@ async function importMemoryFragments(event) {
       pinned: false,
       createdAt: Date.now(),
       updatedAt: Date.now(),
-    });
+    };
+    state.memories.push(card);
     added++;
+    // Embed in background — don't block the import
+    embedAndStoreCard(card).catch(e => console.warn('Embed failed for', card.name, e));
   }
 
   saveState();
