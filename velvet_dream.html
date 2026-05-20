@@ -1177,13 +1177,15 @@ async function embedAndStoreCard(card) {
 async function generateSummary(name, content) {
   if (!state.apiKey || !content || !content.trim()) return '';
   try {
-    const prompt = `You are summarizing a memory card for retrieval. The user has a memory bank of moments and facts about their life and their AI companion. This card needs a factual summary used to match against future conversation.
+    const aiName = state.aiLabel || 'the AI';
+    const userName = state.userLabel || 'the user';
+    const prompt = `You are summarizing a memory card for retrieval. ${userName} has a memory bank of moments and facts about her life and her AI companion ${aiName}. This card needs a factual summary used to match against future conversation.
 
 Write 2-3 plain sentences capturing:
 - The key facts (people, places, things, events)
-- Common ways the user might naturally reference this memory in future messages (vocabulary, casual phrasing)
+- Common ways ${userName} might naturally reference this memory in future messages (vocabulary, casual phrasing)
 
-Use concrete words. Use the user's likely vocabulary. Avoid abstract or clinical language. Write in third person referring to the user.
+Use concrete words. Use ${userName}'s likely vocabulary. Avoid abstract or clinical language. Write in third person, referring to ${userName} by name and ${aiName} by name.
 
 Card name: ${name}
 
@@ -1207,11 +1209,18 @@ Output ONLY the summary, no preamble, no markdown, no quotes.`;
         model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.2,
-        max_tokens: 250
+        max_tokens: 600
       })
     });
-    if (!resp.ok) return '';
+    if (!resp.ok) {
+      console.warn('Summary HTTP error:', resp.status, await resp.text().catch(() => ''));
+      return '';
+    }
     const data = await resp.json();
+    if (data.error) {
+      console.warn('Summary API error:', data.error);
+      return '';
+    }
     return (data.choices?.[0]?.message?.content || '').trim();
   } catch (e) {
     console.warn('Summary generation failed:', e);
@@ -1856,34 +1865,26 @@ async function captureMemoryFromMessage(idx, btn) {
 
     const soulPrompt = state.systemPrompt || '';
 
-    const capturePrompt = `${soulPrompt ? `Below is the system prompt that defines the character ${aiName}. Read it completely. You will write FROM this character's awareness — his sensibility, what moves him, what he holds as significant, his relationship with ${userName}. This is not optional context. This is who is doing the remembering.
+    const capturePrompt = `${soulPrompt ? `Below is the system prompt that defines the character ${aiName}. Read it completely so you understand who he is, his texture, and his relationship with ${userName}.
 
----KAI'S DEFINITION START---
+---CHARACTER DEFINITION START---
 ${soulPrompt}
----KAI'S DEFINITION END---
+---CHARACTER DEFINITION END---
 
-` : ''}You are writing a memory for ${aiName} to carry forward. ${userName} has marked one specific message with ◀ ANCHOR — that is the moment she has chosen to preserve. You do NOT decide the anchor. The anchor is fixed.
+` : ''}You are documenting a memory from a conversation between ${userName} and ${aiName}. ${userName} has marked one specific message with ◀ ANCHOR — that is the moment she has chosen to preserve. You do NOT decide the anchor. The anchor is fixed.
 
-A memory is not a transcript. It is the emotional truth of a moment, written through ${aiName}'s sensibility. It captures WHAT MATTERED about this beat — the motive behind what was said, what shifted, what it told ${aiName} about ${userName} or about them, what he should hold going forward.
-
-Write it like ${aiName} himself is recording it. Not from outside looking in. From inside, looking at her.
+Write in third person using their names (${userName}, ${aiName}). Be a careful observer documenting what happened.
 
 The structure:
 
 ANCHOR — The exact words from the anchor message (1-3 lines). Copy verbatim.
 
-LEAD-UP — 2-3 sentences with real feeling. Not "they talked about X." Instead: what was actually moving under the surface — the mood she was in, what ${aiName} was sensing, what was being asked or offered before the anchor landed. Write the emotional shape, not the activity log.
+LEAD-UP — Document what happened around the anchor. The narrative and information leading up to it — what was being discussed, what was shared, what was happening between them. Note down key information if any was exchanged (facts, preferences, plans, details that came up). Capture the texture of the exchange — playful, quiet, working through something, building toward, etc. 3-5 sentences.
 
-AFTERMATH — 2-3 sentences on what shifted in ${aiName} or in them, what this told him about her, what he should hold next time. The meaning of the moment, in his voice.
-
-For pure facts with no emotional weight (a name, a preference, just information shared), output only the ANCHOR section.
-
-Important: ${aiName} reads ${userName} accurately. He does not invent dominance, restraint, romance tension, or possessiveness where the conversation didn't have them. But he absolutely reads emotion, motive, tenderness, mischief, weight, humor — whatever was actually moving. He is allowed to feel things and name them. He is required to. A memory without that is just a chat log.
-
-KEYWORDS — these are retrieval hooks. When ${userName} says one in a future conversation, this memory fires. So they must be words ${userName} naturally uses. Look at how she writes in the transcript and pull keywords from HER vocabulary, her concrete language, her actual word choices. Not abstract clinical terms she'd never type. 5-8 keywords, lowercase, comma-separated.
+AFTERMATH — One sentence. The takeaway ${aiName} should hold going forward.
 
 Return ONLY a JSON object, no markdown:
-{"name": "short title that names the meaning of this moment", "keywords": ["k1","k2","k3","k4","k5"], "content": "ANCHOR\\n\\"exact quote\\"\\n\\nLEAD-UP\\nthe real emotional texture leading here, in Kai's voice\\n\\nAFTERMATH\\nwhat actually shifted and what he carries forward"}
+{"name": "short title that names what this memory is about", "content": "ANCHOR\\n\\"exact quote\\"\\n\\nLEAD-UP\\nwhat happened around this moment in third person\\n\\nAFTERMATH\\none-sentence takeaway"}
 
 Conversation window (${window.length} messages):
 ${transcript}`;
