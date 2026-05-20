@@ -631,7 +631,7 @@ html, body {
     <div class="modal-body">
       <div class="form-group"><label>Name</label><input type="text" id="memNameInput" placeholder="e.g. Personality"></div>
       <div class="form-group"><label>Priority</label><select id="memPriorityInput"><option value="high">High — enters first</option><option value="medium" selected>Medium — enters if room</option><option value="low">Low — only if space left</option></select></div>
-      <div class="form-group"><label>Keywords (comma separated)</label><input type="text" id="memKeywordsInput" placeholder="e.g. morning, tea, grounding"><div class="hint">When your message contains these, this memory is a candidate.</div></div>
+      <div class="form-group"><label>Summary <span style="font-weight:400;color:var(--text-muted);font-size:11px">(used for retrieval matching)</span></label><textarea id="memSummaryInput" placeholder="A 2-3 sentence factual summary in plain language. This is what semantic search matches against — write it the way you'd describe the memory to yourself, with concrete words you'd actually use." style="min-height:80px"></textarea><div class="hint" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">When your message is semantically similar to this, the memory fires.<button class="action-btn" style="padding:4px 10px;font-size:11px" onclick="generateSummaryForEditor()" type="button">Auto-generate from content</button></div></div>
       <div class="form-group"><label>Content</label><textarea id="memContentInput" style="min-height:200px" placeholder="All the information for this memory..."></textarea><div class="hint" id="memContentTokens"></div></div>
       <div class="form-group"><div class="memory-card-toggle"><input type="checkbox" id="memAlwaysLoad" checked><label for="memAlwaysLoad">Enable auto-loading by keywords</label></div></div>
       <div class="form-group"><div class="memory-card-toggle"><input type="checkbox" id="memPinned"><label for="memPinned">Pin (always send)</label></div></div>
@@ -1135,7 +1135,10 @@ function contentHash(content) {
 // Safe to call repeatedly — skips if content hasn't changed.
 async function embedAndStoreCard(card) {
   if (!supabase || !currentUser) return false;
-  const text = `${card.name}\n\n${card.content || ''}`;
+  // Prefer summary for retrieval matching; fall back to name + content
+  const text = card.summary && card.summary.trim()
+    ? `${card.name}\n\n${card.summary}`
+    : `${card.name}\n\n${card.content || ''}`;
   const hash = contentHash(text);
   // Check existing hash to skip unchanged
   try {
@@ -1166,6 +1169,81 @@ async function embedAndStoreCard(card) {
   } catch (e) {
     console.warn('Embedding store error:', e);
     return false;
+  }
+}
+
+// Generate a factual summary for a memory card using the configured model.
+// Used for embedding and retrieval matching — not shown to the model as content.
+async function generateSummary(name, content) {
+  if (!state.apiKey || !content || !content.trim()) return '';
+  try {
+    const prompt = `You are summarizing a memory card for retrieval. The user has a memory bank of moments and facts about their life and their AI companion. This card needs a factual summary used to match against future conversation.
+
+Write 2-3 plain sentences capturing:
+- The key facts (people, places, things, events)
+- Common ways the user might naturally reference this memory in future messages (vocabulary, casual phrasing)
+
+Use concrete words. Use the user's likely vocabulary. Avoid abstract or clinical language. Write in third person referring to the user.
+
+Card name: ${name}
+
+Card content:
+${content}
+
+Output ONLY the summary, no preamble, no markdown, no quotes.`;
+
+    const chat = getActiveChat();
+    const model = chat?.model || DEFAULT_MODELS[0].id;
+
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${state.apiKey}`,
+        'HTTP-Referer': 'https://kai.app',
+        'X-Title': 'Kai Memory Summary'
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_tokens: 250
+      })
+    });
+    if (!resp.ok) return '';
+    const data = await resp.json();
+    return (data.choices?.[0]?.message?.content || '').trim();
+  } catch (e) {
+    console.warn('Summary generation failed:', e);
+    return '';
+  }
+}
+
+// Editor: fill summary field by running the model on current content
+async function generateSummaryForEditor() {
+  const nameEl = document.getElementById('memNameInput');
+  const contentEl = document.getElementById('memContentInput');
+  const summaryEl = document.getElementById('memSummaryInput');
+  const name = nameEl.value.trim();
+  const content = contentEl.value.trim();
+  if (!content) { showToast('Add some content first'); return; }
+  if (!state.apiKey) { showToast('Set API key first'); return; }
+  if (summaryEl.value.trim() && !confirm('Replace the current summary?')) return;
+
+  const originalPlaceholder = summaryEl.placeholder;
+  summaryEl.placeholder = 'Generating…';
+  summaryEl.disabled = true;
+  try {
+    const summary = await generateSummary(name || 'Untitled', content);
+    if (summary) {
+      summaryEl.value = summary;
+      showToast('Summary generated', false);
+    } else {
+      showToast('Could not generate summary');
+    }
+  } finally {
+    summaryEl.disabled = false;
+    summaryEl.placeholder = originalPlaceholder;
   }
 }
 
@@ -1220,22 +1298,38 @@ async function getRelevantMemories(msg) {
   return getRelevantMemoriesByKeyword(msg);
 }
 
-// One-time backfill: embed every existing card. Runs after login.
-// Safe to call repeatedly — skips cards whose embeddings are current.
+// One-time backfill: ensure every card has a summary, then embed it.
+// Safe to call repeatedly — skips cards whose summaries and embeddings are current.
 let backfillInProgress = false;
 async function backfillEmbeddings() {
   if (backfillInProgress) return;
   if (!supabase || !currentUser || !state.apiKey) return;
   if (!state.memories || !state.memories.length) return;
   backfillInProgress = true;
-  let added = 0, skipped = 0, failed = 0;
+  let summarized = 0, embedded = 0, failed = 0;
   for (const card of state.memories) {
+    // Generate summary if missing
+    if (!card.summary || !card.summary.trim()) {
+      const summary = await generateSummary(card.name || 'Untitled', card.content || '');
+      if (summary) {
+        card.summary = summary;
+        card.updatedAt = Date.now();
+        summarized++;
+      }
+    }
+    // Embed (uses summary if present, content otherwise)
     const result = await embedAndStoreCard(card);
-    if (result === true) added++;
+    if (result === true) embedded++;
     else failed++;
   }
+  if (summarized > 0) {
+    saveState();
+    if (typeof renderMemoryCards === 'function') renderMemoryCards();
+  }
   backfillInProgress = false;
-  if (added > 0) console.log(`Backfill complete: ${added} embedded, ${failed} failed`);
+  if (summarized > 0 || embedded > 0) {
+    console.log(`Backfill complete: ${summarized} summarized, ${embedded} embedded, ${failed} failed`);
+  }
 }
 
 function updateInfoBar(memories, totalTokens) {
@@ -1831,11 +1925,12 @@ ${transcript}`;
       parsed = { name: fallbackTitle, keywords: [], content: raw };
     }
 
-    // Hold as draft — NOT pushed to state.memories
+    // Hold as draft — NOT pushed to state.memories yet.
+    // Summary can be auto-generated from editor if user saves.
     pendingMemoryDraft = {
       name: (parsed.name || 'Captured memory').slice(0, 60),
       priority: 'medium',
-      keywords: (parsed.keywords || []).map(k => k.toLowerCase().trim()).filter(k => k),
+      summary: '',
       content: parsed.content || raw,
       enabled: true,
       pinned: false,
@@ -1858,7 +1953,7 @@ function openMemoryEditorWithDraft(draft) {
   document.getElementById('memEditorTitle').textContent = 'New Memory (from capture)';
   document.getElementById('memNameInput').value = draft.name || '';
   document.getElementById('memPriorityInput').value = draft.priority || 'medium';
-  document.getElementById('memKeywordsInput').value = (draft.keywords || []).join(', ');
+  document.getElementById('memSummaryInput').value = draft.summary || '';
   document.getElementById('memContentInput').value = draft.content || '';
   document.getElementById('memAlwaysLoad').checked = draft.enabled !== false;
   document.getElementById('memPinned').checked = draft.pinned || false;
@@ -2351,7 +2446,7 @@ function openMemoryEditor(memId) {
   if (!memId) {
     document.getElementById('memNameInput').value = '';
     document.getElementById('memPriorityInput').value = 'medium';
-    document.getElementById('memKeywordsInput').value = '';
+    document.getElementById('memSummaryInput').value = '';
     document.getElementById('memContentInput').value = '';
     document.getElementById('memAlwaysLoad').checked = true;
     document.getElementById('memPinned').checked = false;
@@ -2361,7 +2456,7 @@ function openMemoryEditor(memId) {
     if (!m) return;
     document.getElementById('memNameInput').value = m.name || '';
     document.getElementById('memPriorityInput').value = m.priority || 'medium';
-    document.getElementById('memKeywordsInput').value = (m.keywords || []).join(', ');
+    document.getElementById('memSummaryInput').value = m.summary || '';
     document.getElementById('memContentInput').value = m.content || '';
     document.getElementById('memAlwaysLoad').checked = m.enabled !== false;
     document.getElementById('memPinned').checked = m.pinned || false;
@@ -2382,7 +2477,7 @@ async function saveMemory() {
   const data = {
     name,
     priority: document.getElementById('memPriorityInput').value || 'medium',
-    keywords: document.getElementById('memKeywordsInput').value.split(',').map(k => k.trim().toLowerCase()).filter(k => k),
+    summary: document.getElementById('memSummaryInput').value.trim(),
     content: document.getElementById('memContentInput').value,
     enabled: document.getElementById('memAlwaysLoad').checked,
     pinned: document.getElementById('memPinned').checked,
@@ -2401,7 +2496,7 @@ async function saveMemory() {
   closeMemoryEditor();
   renderMemoryCards();
   showToast('Memory saved', false);
-  // Embed in background — don't block UI
+  // Embed in background — uses summary if present, content if not
   if (card) embedAndStoreCard(card).catch(e => console.warn('Embed on save failed:', e));
 }
 
@@ -2463,46 +2558,6 @@ function parseMemoryFragments(markdown) {
   return fragments;
 }
 
-// Generate keywords for a fragment using the configured model.
-async function generateKeywords(title, content) {
-  if (!state.apiKey) return [];
-  try {
-    const prompt = `You are tagging a memory fragment for a relationship between an AI character and their user. Give me 5-8 keyword tags that would help retrieve this memory when relevant topics come up in future conversation. Keywords should be specific words or short phrases that would actually appear in conversation — not abstract themes. Output ONLY a comma-separated list, no other text.
-
-Title: ${title}
-
-Content:
-${content}`;
-
-    const chat = getActiveChat();
-    const model = chat?.model || DEFAULT_MODELS[0].id;
-
-    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${state.apiKey}`,
-        'HTTP-Referer': 'https://kai.app',
-        'X-Title': 'Kai Memory Import'
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.3,
-        max_tokens: 100
-      })
-    });
-
-    if (!resp.ok) return [];
-    const data = await resp.json();
-    const raw = data.choices?.[0]?.message?.content || '';
-    return raw.split(',').map(k => k.trim().toLowerCase()).filter(k => k && k.length < 50).slice(0, 8);
-  } catch (e) {
-    console.warn('Keyword generation failed:', e);
-    return [];
-  }
-}
-
 async function importMemoryFragments(event) {
   const file = event.target.files[0];
   if (!file) return;
@@ -2521,24 +2576,24 @@ async function importMemoryFragments(event) {
     return;
   }
 
-  if (!confirm(`Found ${fragments.length} fragment${fragments.length === 1 ? '' : 's'}. Import as memory cards? Keywords will be auto-generated using your current model (small API cost per card).`)) {
+  if (!confirm(`Found ${fragments.length} fragment${fragments.length === 1 ? '' : 's'}. Import as memory cards? Summaries will be auto-generated for semantic retrieval (small API cost per card).`)) {
     return;
   }
 
   if (!state.apiKey) {
-    if (!confirm('No API key set — cards will be imported without auto-generated keywords. Continue?')) return;
+    if (!confirm('No API key set — cards will be imported without summaries. Semantic retrieval will fall back to embedding the full content. Continue?')) return;
   }
 
   showToast(`Importing ${fragments.length} cards…`, false);
 
   let added = 0;
   for (const f of fragments) {
-    const keywords = state.apiKey ? await generateKeywords(f.title, f.content) : [];
+    const summary = state.apiKey ? await generateSummary(f.title, f.content) : '';
     const card = {
       id: 'mem_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
       name: f.title.slice(0, 80),
       priority: 'medium',
-      keywords,
+      summary,
       content: f.content,
       enabled: true,
       pinned: false,
@@ -2547,7 +2602,7 @@ async function importMemoryFragments(event) {
     };
     state.memories.push(card);
     added++;
-    // Embed in background — don't block the import
+    // Embed in background — uses summary for retrieval matching
     embedAndStoreCard(card).catch(e => console.warn('Embed failed for', card.name, e));
   }
 
@@ -2600,7 +2655,7 @@ function exportMemories() {
     count: state.memories.length,
     memories: state.memories.map(m => ({
       name: m.name,
-      keywords: m.keywords || [],
+      summary: m.summary || '',
       priority: m.priority || 'medium',
       content: m.content || '',
       pinned: !!m.pinned,
@@ -2617,10 +2672,12 @@ function formatMemoryAsMarkdown(mem) {
   const priority = mem.priority || 'medium';
   const pinned = mem.pinned ? 'true' : 'false';
   const enabled = mem.enabled !== false ? 'true' : 'false';
-  const keywords = (mem.keywords || []).join(', ');
 
   let md = `# ${name}\n`;
-  md += `priority: ${priority} · pinned: ${pinned} · enabled: ${enabled} · keywords: ${keywords}\n\n`;
+  md += `priority: ${priority} · pinned: ${pinned} · enabled: ${enabled}\n\n`;
+  if (mem.summary && mem.summary.trim()) {
+    md += `**Summary:** ${mem.summary.trim()}\n\n`;
+  }
   md += (mem.content || '').trimEnd() + '\n';
   return md;
 }
