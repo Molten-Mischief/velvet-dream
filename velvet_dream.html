@@ -182,11 +182,10 @@ html, body {
   display: none; align-items: center; gap: 8px; padding: 6px 12px;
   background: var(--accent-glow); border-bottom: 1px solid var(--border);
   font-size: 11px; color: var(--accent); flex-wrap: wrap; justify-content: space-between;
-  transition: top 0.25s ease, opacity 0.2s ease;
+  transition: opacity 0.2s ease;
 }
 .info-bar.visible { display: flex; }
-/* When header hides, info bar slides up to take its place */
-.header.hidden ~ .info-bar { top: 0; }
+.header.hidden ~ .info-bar { opacity: 0; pointer-events: none; }
 .info-bar-left { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .memory-tag { background: var(--accent-dim); color: var(--bg-primary); padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; }
 .token-badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; white-space: nowrap; font-family: 'JetBrains Mono', monospace; }
@@ -1054,9 +1053,6 @@ function switchChat(id) {
   pendingImages = [];
   document.getElementById('imagePreviewRow').innerHTML = '';
   syncModelDropdown();
-  // Clear info bar — different chat, different state
-  lastInfoBarMemories = [];
-  updateInfoBar([], null);
   saveState(); renderChatList(); renderMessages();
 }
 
@@ -1242,33 +1238,19 @@ async function backfillEmbeddings() {
   if (added > 0) console.log(`Backfill complete: ${added} embedded, ${failed} failed`);
 }
 
-// Tracks the memories currently shown in the info bar so we can preserve them across phases
-let lastInfoBarMemories = [];
-
-function updateInfoBar(memories, totalTokens, phase) {
+function updateInfoBar(memories, totalTokens) {
   const bar = document.getElementById('infoBar');
   const left = document.getElementById('infoBarLeft');
   const badge = document.getElementById('tokenBadge');
-
-  // For 'received' phase, keep the chips that were shown for the outgoing message
-  // (unless memories is explicitly non-empty — caller is replacing them)
-  let memsToShow = memories;
-  if (phase === 'received' && memories.length === 0) {
-    memsToShow = lastInfoBarMemories;
-  } else {
-    lastInfoBarMemories = memories;
-  }
-
-  if (memsToShow.length === 0 && !totalTokens) { bar.classList.remove('visible'); return; }
+  if (memories.length === 0 && !totalTokens) { bar.classList.remove('visible'); return; }
   bar.classList.add('visible');
   let html = '';
-  if (memsToShow.length > 0) {
-    html = '✦ ' + memsToShow.map(m => `<span class="memory-tag">${m.pinned ? '📌' : '◐'} ${escapeHtml(m.name)}</span>`).join('');
+  if (memories.length > 0) {
+    html = '✦ ' + memories.map(m => `<span class="memory-tag">${m.pinned ? '📌' : '◐'} ${escapeHtml(m.name)}</span>`).join('');
   }
   left.innerHTML = html;
   if (totalTokens) {
-    const arrow = phase === 'received' ? '↓' : '↑';
-    badge.textContent = `${arrow} ~${tokenLabel(totalTokens)} tokens`;
+    badge.textContent = `~${tokenLabel(totalTokens)} tokens`;
     badge.className = 'token-badge ' + tokenClass(totalTokens);
   } else {
     badge.textContent = '';
@@ -1327,7 +1309,7 @@ async function buildApiMessages(chat, userContent) {
   const ctx = state.contextMessages || 8;
   chat.messages.slice(-ctx).forEach(m => messages.push({ role: m.role, content: m.content }));
   const totalText = messages.map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join(' ');
-  updateInfoBar(mems, estimateTokens(totalText), 'sent');
+  updateInfoBar(mems, estimateTokens(totalText));
   return messages;
 }
 
@@ -1379,10 +1361,6 @@ async function sendMessage() {
   if ((!text && !pendingImages.length) || state.isStreaming) return;
   if (!state.apiKey) { showToast('Set API key in Settings'); openSettings(); return; }
   if (!getActiveChat()) newChat();
-
-  // Clear info bar from previous turn — new send starts fresh
-  lastInfoBarMemories = [];
-  updateInfoBar([], null);
 
   const chat = getActiveChat();
   chat.model = document.getElementById('modelSelect').value;
@@ -1441,7 +1419,7 @@ async function sendMessage() {
         'HTTP-Referer': 'https://kai.app',
         'X-Title': 'Kai'
       },
-      body: JSON.stringify({ model: chat.model, messages: apiMsgs, stream: true, stream_options: { include_usage: true }, ...buildApiParams() }),
+      body: JSON.stringify({ model: chat.model, messages: apiMsgs, stream: true, ...buildApiParams() }),
       signal: abortController.signal
     });
 
@@ -1459,7 +1437,6 @@ async function sendMessage() {
 
     let full = '';
     let realModel = '';
-    let completionTokens = 0;
     const reader = resp.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
@@ -1477,8 +1454,6 @@ async function sendMessage() {
         try {
           const parsed = JSON.parse(d);
           if (parsed.model && !realModel) realModel = parsed.model;
-          // Capture usage from any chunk that has it (typically the final one)
-          if (parsed.usage?.completion_tokens) completionTokens = parsed.usage.completion_tokens;
           const delta = parsed.choices?.[0]?.delta?.content;
           if (delta) {
             full += delta;
@@ -1494,29 +1469,6 @@ async function sendMessage() {
     saveState();
     renderChatList();
     renderMessages();
-    // Swap info bar to show response token count
-    if (completionTokens > 0) {
-      updateInfoBar([], completionTokens, 'received');
-      // Auto-clear after 6 seconds so the bar doesn't linger
-      setTimeout(() => {
-        // Only clear if state hasn't moved on (next send didn't happen)
-        const bar = document.getElementById('infoBar');
-        const badge = document.getElementById('tokenBadge');
-        if (bar && badge && badge.textContent.includes('↓')) {
-          bar.style.transition = 'opacity 0.6s ease';
-          bar.style.opacity = '0';
-          setTimeout(() => {
-            bar.classList.remove('visible');
-            bar.style.opacity = '';
-            bar.style.transition = '';
-            lastInfoBarMemories = [];
-            const left = document.getElementById('infoBarLeft');
-            if (left) left.innerHTML = '';
-            badge.textContent = '';
-          }, 600);
-        }
-      }, 6000);
-    }
 
   } catch (err) {
     document.getElementById('typing')?.remove();
@@ -1542,12 +1494,9 @@ function stopStreaming() {
 function renderMessages() {
   const area = document.getElementById('chatArea');
   const chat = getActiveChat();
-  // Info bar state is managed by send/receive flow, not by renders
+  updateInfoBar([], null);
 
   if (!chat || !chat.messages.length) {
-    // Empty/welcome state — clear the info bar since there's no active turn
-    lastInfoBarMemories = [];
-    updateInfoBar([], null);
     const av = state.welcomeAvatar ? `<img class="welcome-avatar" src="${state.welcomeAvatar}">` : '';
     const sync = currentUser ? '<div class="sync-status online">☁ Synced</div>' : (isOfflineMode ? '<div class="sync-status offline">Offline</div>' : '');
     area.innerHTML = `<div class="welcome">${av}<div class="welcome-logo">Velvet Dream</div><div class="welcome-sub">Your space. Pick a model, write, begin.</div>${sync}</div>`;
