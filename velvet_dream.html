@@ -14,7 +14,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital,wght@0,400;0,700;1,400&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,300;1,9..40,400&family=JetBrains+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
-:root {
+:root, [data-theme="dark"] {
   --bg-primary: #151210;
   --bg-secondary: #1c1916;
   --bg-tertiary: #24201b;
@@ -33,9 +33,59 @@
   --danger: #c07060;
   --success: #7cb87c;
   --warning: #c4956a;
+  --rabbit-url: url('rabbit-dark.png');
   --radius: 12px;
   --radius-sm: 8px;
   --shadow: 0 4px 24px rgba(0,0,0,0.5);
+}
+
+[data-theme="light"] {
+  --bg-primary: #faf5ef;
+  --bg-secondary: #f1e9dc;
+  --bg-tertiary: #e8dfce;
+  --bg-hover: #ddd2bd;
+  --text-primary: #2b2620;
+  --text-secondary: #524434;
+  --text-muted: #6b5d4e;
+  --accent: #6f4f30;
+  --accent-dim: #8a6741;
+  --accent-glow: rgba(111, 79, 48, 0.10);
+  --accent-subtle: rgba(111, 79, 48, 0.05);
+  --user-bubble: rgba(111, 79, 48, 0.08);
+  --ai-bubble: #f1e9dc;
+  --border: rgba(43, 38, 32, 0.15);
+  --border-light: rgba(43, 38, 32, 0.25);
+  --danger: #a8442c;
+  --success: #5a7d4a;
+  --warning: #8a6531;
+  --rabbit-url: url('rabbit-light.png');
+  --shadow: 0 4px 24px rgba(43, 38, 32, 0.10);
+}
+
+/* Auto mode: follow OS preference when no manual theme is set */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme]) {
+    --bg-primary: #faf5ef;
+    --bg-secondary: #f1e9dc;
+    --bg-tertiary: #e8dfce;
+    --bg-hover: #ddd2bd;
+    --text-primary: #2b2620;
+    --text-secondary: #524434;
+    --text-muted: #6b5d4e;
+    --accent: #6f4f30;
+    --accent-dim: #8a6741;
+    --accent-glow: rgba(111, 79, 48, 0.10);
+    --accent-subtle: rgba(111, 79, 48, 0.05);
+    --user-bubble: rgba(111, 79, 48, 0.08);
+    --ai-bubble: #f1e9dc;
+    --border: rgba(43, 38, 32, 0.15);
+    --border-light: rgba(43, 38, 32, 0.25);
+    --danger: #a8442c;
+    --success: #5a7d4a;
+    --warning: #8a6531;
+    --rabbit-url: url('rabbit-light.png');
+    --shadow: 0 4px 24px rgba(43, 38, 32, 0.10);
+  }
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -48,6 +98,25 @@ html, body {
   font-family: 'DM Sans', sans-serif;
   -webkit-tap-highlight-color: transparent;
   -webkit-font-smoothing: antialiased;
+}
+
+/* ===== SPLASH ===== */
+.splash-screen {
+  position: fixed; inset: 0; background: var(--bg-primary);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 1000; transition: opacity 0.5s ease;
+  padding: 32px;
+}
+.splash-screen.fading { opacity: 0; pointer-events: none; }
+.splash-screen.hidden { display: none; }
+.splash-rabbit {
+  max-width: 70vmin; max-height: 70vmin;
+  width: auto; height: auto;
+  animation: splash-fade-in 0.6s ease-out;
+}
+@keyframes splash-fade-in {
+  from { opacity: 0; transform: scale(0.96); }
+  to { opacity: 1; transform: scale(1); }
 }
 
 /* ===== LOGIN ===== */
@@ -200,7 +269,7 @@ html, body {
   height: 100%; text-align: center; padding: 32px;
 }
 .welcome-logo { font-family: 'Libre Baskerville', serif; font-size: 30px; font-weight: 400; color: var(--accent); margin-bottom: 12px; }
-.welcome-avatar { width: 88px; height: 88px; border-radius: 50%; object-fit: cover; border: 3px solid var(--accent); margin-bottom: 16px; box-shadow: 0 0 24px rgba(196,149,106,0.2); }
+.welcome-rabbit { width: 180px; height: 180px; object-fit: contain; margin-bottom: 20px; }
 .welcome-sub { font-size: 14px; color: var(--text-muted); max-width: 300px; line-height: 1.6; }
 .sync-status { font-size: 11px; color: var(--text-muted); margin-top: 16px; padding: 4px 12px; border: 1px dashed var(--border); border-radius: 12px; }
 .sync-status.online { color: var(--success); border-color: rgba(124,184,124,0.3); }
@@ -410,7 +479,12 @@ html, body {
 </head>
 <body>
 
-<div class="login-screen" id="loginScreen">
+<!-- Splash screen — shows for 3 seconds on app load. Image switches with theme. -->
+<div class="splash-screen" id="splashScreen">
+  <img class="splash-rabbit" id="splashRabbit" alt="">
+</div>
+
+<div class="login-screen hidden" id="loginScreen">
   <div class="login-logo">Velvet Dream</div>
   <div class="login-sub">your space</div>
   <div class="login-form">
@@ -454,7 +528,7 @@ html, body {
     <span class="token-badge" id="tokenBadge"></span>
   </div>
   <div class="chat-area" id="chatArea">
-    <div class="welcome"><div class="welcome-logo">Velvet Dream</div><div class="welcome-sub">Your space. Pick a model, write, begin.</div></div>
+    <div class="welcome"><img class="welcome-rabbit" src="" alt=""><div class="welcome-logo">Velvet Dream</div><div class="welcome-sub">Your space. Pick a model, write, begin.</div></div>
   </div>
   <button class="jump-bottom-btn" id="jumpBottomBtn" onclick="jumpToBottom()" title="Jump to latest">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -484,18 +558,14 @@ html, body {
       <button class="settings-tab" data-tab="memoryTab" onclick="switchSettingsTab('memoryTab', this)">Memory</button>
     </div>
     <div class="modal-body" id="settingsTab">
-      <div class="form-group" style="text-align:center">
-        <label>Avatar</label>
-        <div style="display:flex;flex-direction:column;align-items:center;gap:10px">
-          <div id="avatarPreview" style="width:72px;height:72px;border-radius:50%;background:var(--bg-tertiary);border:2px solid var(--border);display:flex;align-items:center;justify-content:center;overflow:hidden;cursor:pointer" onclick="document.getElementById('avatarFileInput').click()">
-            <span id="avatarPlaceholder" style="color:var(--text-muted);font-size:24px">+</span>
-          </div>
-          <input type="file" id="avatarFileInput" accept="image/*" style="display:none" onchange="handleAvatarUpload(event)">
-          <div style="display:flex;gap:8px">
-            <button class="action-btn" style="flex:none;padding:6px 14px;font-size:11px" onclick="document.getElementById('avatarFileInput').click()">Choose</button>
-            <button class="action-btn" style="flex:none;padding:6px 14px;font-size:11px;border-color:var(--danger);color:var(--danger)" onclick="removeAvatar()">Remove</button>
-          </div>
-        </div>
+      <div class="form-group">
+        <label>Theme</label>
+        <select class="form-select" id="themeSelect" onchange="setThemePreference(this.value)" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b5f52' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;padding-right:36px">
+          <option value="auto">Auto (follow device)</option>
+          <option value="light">Light (day)</option>
+          <option value="dark">Dark (night)</option>
+        </select>
+        <div class="hint">Auto switches with your device's day/night setting.</div>
       </div>
       <div class="form-group"><label>Your Name</label><input type="text" id="userLabelInput" placeholder="You"></div>
       <div class="form-group"><label>AI Name</label><input type="text" id="aiLabelInput" placeholder="Kai"></div>
@@ -613,10 +683,15 @@ html, body {
       <div class="collapsible-section collapsed" id="memImportSection">
         <div style="padding-top:12px">
           <div class="action-row">
-            <button class="action-btn" onclick="document.getElementById('memFragmentFile').click()">Import Markdown</button>
+            <button class="action-btn" onclick="document.getElementById('memFragmentFile').click()">Import Markdown File</button>
             <input type="file" id="memFragmentFile" accept=".md,text/markdown,text/plain" style="display:none" onchange="importMemoryFragments(event)">
           </div>
-          <div class="hint" style="margin-top:6px">Imports a .md file of fragments (## Title, then Context/Moment/Why this matters). Adds to existing memories — does not replace. Keywords auto-generated per card.</div>
+          <div class="hint" style="margin-top:6px">Each fragment starts with <code>## Title</code>. Everything between headings becomes one card. Adds to existing memories — does not replace. Summaries auto-generated per card.</div>
+          <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+            <label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:8px">Or paste markdown directly</label>
+            <textarea id="memFragmentPaste" placeholder="## 1. The night I realized&#10;&#10;Content for the first card goes here...&#10;&#10;## 2. Velvet Dream&#10;&#10;Content for the second card..." style="min-height:120px;font-family:'JetBrains Mono',monospace;font-size:12px"></textarea>
+            <button class="action-btn" style="margin-top:8px;width:100%" onclick="importMemoryFragmentsFromPaste()">Import Pasted Text</button>
+          </div>
         </div>
       </div>
       <button class="save-btn" onclick="saveMemorySettings()">Save Memory Settings</button>
@@ -1600,9 +1675,14 @@ function renderMessages() {
   updateInfoBar([], null);
 
   if (!chat || !chat.messages.length) {
-    const av = state.welcomeAvatar ? `<img class="welcome-avatar" src="${state.welcomeAvatar}">` : '';
     const sync = currentUser ? '<div class="sync-status online">☁ Synced</div>' : (isOfflineMode ? '<div class="sync-status offline">Offline</div>' : '');
-    area.innerHTML = `<div class="welcome">${av}<div class="welcome-logo">Velvet Dream</div><div class="welcome-sub">Your space. Pick a model, write, begin.</div>${sync}</div>`;
+    area.innerHTML = `<div class="welcome"><img class="welcome-rabbit" src="" alt=""><div class="welcome-logo">Velvet Dream</div><div class="welcome-sub">Your space. Pick a model, write, begin.</div>${sync}</div>`;
+    // Set the rabbit image based on current theme
+    const rabbitImg = area.querySelector('.welcome-rabbit');
+    if (rabbitImg) {
+      const theme = document.documentElement.getAttribute('data-theme') || (window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark');
+      rabbitImg.src = theme === 'light' ? 'rabbit-light.png' : 'rabbit-dark.png';
+    }
     area._renderedChatId = null;
     area._renderedCount = 0;
     return;
@@ -2165,7 +2245,7 @@ function openSettings() {
   document.querySelector('.settings-tab[data-tab="settingsTab"]').classList.add('active');
   document.getElementById('settingsTab').style.display = '';
   document.getElementById('memoryTab').style.display = 'none';
-  updateAvatarPreview();
+  document.getElementById('themeSelect').value = getThemePreference();
   document.getElementById('apiKeyInput').value = state.apiKey;
   document.getElementById('supabaseUrlInput').value = localStorage.getItem('haven_supabase_url') || '';
   document.getElementById('supabaseKeyInput').value = localStorage.getItem('haven_supabase_key') || '';
@@ -2347,49 +2427,53 @@ async function saveSupabaseConfig() {
   }
 }
 
-// ===== AVATAR =====
-function handleAvatarUpload(event) {
-  const file = event.target.files[0];
-  if (!file) return;
-  if (file.size > 500 * 1024) { showToast('Too large (max 500KB)'); event.target.value = ''; return; }
-  const reader = new FileReader();
-  reader.onload = (e) => {
-    const img = new Image();
-    img.onload = () => {
-      const canvas = document.createElement('canvas');
-      const maxSize = 200;
-      let w = img.width, h = img.height;
-      if (w > h) { h = Math.round(h * maxSize / w); w = maxSize; }
-      else { w = Math.round(w * maxSize / h); h = maxSize; }
-      canvas.width = w; canvas.height = h;
-      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-      state.welcomeAvatar = canvas.toDataURL('image/jpeg', 0.85);
-      updateAvatarPreview();
-      saveState();
-      renderMessages();
-      showToast('Avatar updated', false);
-    };
-    img.src = e.target.result;
-  };
-  reader.readAsDataURL(file);
-  event.target.value = '';
+// ===== THEME =====
+// Theme preference is stored in localStorage so it loads before state.
+// Values: 'auto' (follow OS), 'light', 'dark'.
+function getThemePreference() {
+  return localStorage.getItem('haven_theme') || 'auto';
 }
 
-function removeAvatar() {
-  state.welcomeAvatar = '';
-  updateAvatarPreview();
-  saveState();
-  renderMessages();
-  showToast('Avatar removed', false);
+function setThemePreference(pref) {
+  localStorage.setItem('haven_theme', pref);
+  applyTheme();
 }
 
-function updateAvatarPreview() {
-  const p = document.getElementById('avatarPreview');
-  if (state.welcomeAvatar) {
-    p.innerHTML = `<img src="${state.welcomeAvatar}" style="width:100%;height:100%;object-fit:cover">`;
+function applyTheme() {
+  const pref = getThemePreference();
+  const root = document.documentElement;
+  if (pref === 'auto') {
+    root.removeAttribute('data-theme');
   } else {
-    p.innerHTML = '<span style="color:var(--text-muted);font-size:24px">+</span>';
+    root.setAttribute('data-theme', pref);
   }
+  // Sync rabbit images that depend on theme
+  updateThemedImages();
+}
+
+function currentEffectiveTheme() {
+  const pref = getThemePreference();
+  if (pref === 'light' || pref === 'dark') return pref;
+  return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+}
+
+function updateThemedImages() {
+  const theme = currentEffectiveTheme();
+  const src = theme === 'light' ? 'rabbit-light.png' : 'rabbit-dark.png';
+  // Splash
+  const splashImg = document.getElementById('splashRabbit');
+  if (splashImg && !splashImg.src.endsWith(src)) splashImg.src = src;
+  // Welcome screens (may be multiple instances at different times)
+  document.querySelectorAll('.welcome-rabbit').forEach(img => {
+    if (!img.src.endsWith(src)) img.src = src;
+  });
+}
+
+// Listen for OS-level theme changes when in 'auto' mode
+if (window.matchMedia) {
+  window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', () => {
+    if (getThemePreference() === 'auto') updateThemedImages();
+  });
 }
 
 function toggleSection(id, el) {
@@ -2570,19 +2654,31 @@ async function importMemoryFragments(event) {
   }
 
   const text = await file.text();
+  await processMemoryFragmentImport(text);
+}
+
+async function importMemoryFragmentsFromPaste() {
+  const ta = document.getElementById('memFragmentPaste');
+  const text = ta.value.trim();
+  if (!text) { showToast('Paste some markdown first'); return; }
+  const success = await processMemoryFragmentImport(text);
+  if (success) ta.value = '';
+}
+
+async function processMemoryFragmentImport(text) {
   const fragments = parseMemoryFragments(text);
 
   if (!fragments.length) {
-    showToast('No memory fragments found — check format');
-    return;
+    showToast('No memory fragments found — each card needs ## Title');
+    return false;
   }
 
   if (!confirm(`Found ${fragments.length} fragment${fragments.length === 1 ? '' : 's'}. Import as memory cards? Summaries will be auto-generated for semantic retrieval (small API cost per card).`)) {
-    return;
+    return false;
   }
 
   if (!state.apiKey) {
-    if (!confirm('No API key set — cards will be imported without summaries. Semantic retrieval will fall back to embedding the full content. Continue?')) return;
+    if (!confirm('No API key set — cards will be imported without summaries. Semantic retrieval will fall back to embedding the full content. Continue?')) return false;
   }
 
   showToast(`Importing ${fragments.length} cards…`, false);
@@ -2603,13 +2699,13 @@ async function importMemoryFragments(event) {
     };
     state.memories.push(card);
     added++;
-    // Embed in background — uses summary for retrieval matching
     embedAndStoreCard(card).catch(e => console.warn('Embed failed for', card.name, e));
   }
 
   saveState();
   renderMemoryCards();
   showToast(`Imported ${added} memory card${added === 1 ? '' : 's'}`, false);
+  return true;
 }
 
 // ===== EXPORT/IMPORT =====
@@ -2767,6 +2863,25 @@ function showToast(msg, isError = true) {
 }
 
 // ===== INIT =====
+// Apply theme synchronously before anything renders (avoids flash of wrong color)
+applyTheme();
+
+// Splash screen: holds for 3 seconds while app boots silently in the background.
+// Theme-aware: shows the rabbit appropriate for current light/dark mode.
+const SPLASH_DURATION_MS = 3000;
+const splashShownAt = Date.now();
+
+async function dismissSplashAfter(minMs) {
+  const elapsed = Date.now() - splashShownAt;
+  const wait = Math.max(0, minMs - elapsed);
+  await new Promise(r => setTimeout(r, wait));
+  const splash = document.getElementById('splashScreen');
+  if (splash) {
+    splash.classList.add('fading');
+    setTimeout(() => splash.classList.add('hidden'), 500);
+  }
+}
+
 (async function init() {
   if (SUPABASE_URL && SUPABASE_ANON_KEY) {
     try {
@@ -2779,12 +2894,15 @@ function showToast(msg, isError = true) {
         document.getElementById('syncBtn').style.display = 'flex';
         await loadFromCloud();
         enterApp();
+        await dismissSplashAfter(SPLASH_DURATION_MS);
         return;
       }
     } catch (e) {
       console.log('Supabase init:', e);
     }
   }
+  // No session — splash still holds full duration, then login appears
+  await dismissSplashAfter(SPLASH_DURATION_MS);
   document.getElementById('loginScreen').classList.remove('hidden');
 })();
 </script>

@@ -1,6 +1,6 @@
 // Velvet Dream Service Worker
 // Bump CACHE_VERSION when you push new code — forces all clients to refresh
-const CACHE_VERSION = 'v16';
+const CACHE_VERSION = 'v17';
 const CACHE_NAME = `velvet-dream-${CACHE_VERSION}`;
 
 const CORE_ASSETS = [
@@ -9,7 +9,9 @@ const CORE_ASSETS = [
   './manifest.json',
   './icons/icon-192-dark.png',
   './icons/icon-512-dark.png',
-  './icons/apple-touch-icon.png'
+  './icons/apple-touch-icon.png',
+  './rabbit-light.png',
+  './rabbit-dark.png'
 ];
 
 // Install: cache the core assets
