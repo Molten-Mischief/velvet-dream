@@ -725,6 +725,65 @@ let supabase = null;
 let currentUser = null;
 let isOfflineMode = false;
 
+// ===== KEY ENCRYPTION =====
+// Holds the login password in memory ONLY for the current session, used to
+// encrypt/decrypt API keys when syncing with Supabase. Never persisted.
+// On page reload, user re-enters password to log in, which repopulates this.
+let sessionPassword = null;
+
+// Derive an AES-GCM key from a passphrase + salt using PBKDF2.
+// Salt is the user's Supabase user ID (stable per account, public, fine to reuse).
+async function deriveKey(passphrase, saltStr) {
+  const enc = new TextEncoder();
+  const baseKey = await crypto.subtle.importKey(
+    'raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: enc.encode(saltStr), iterations: 100000, hash: 'SHA-256' },
+    baseKey,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt']
+  );
+}
+
+// Encrypt a string. Returns base64 of [12-byte IV || ciphertext], or '' if input empty.
+async function encryptString(plaintext, passphrase, saltStr) {
+  if (!plaintext) return '';
+  const key = await deriveKey(passphrase, saltStr);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const ct = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(plaintext)
+  );
+  const blob = new Uint8Array(iv.length + ct.byteLength);
+  blob.set(iv, 0);
+  blob.set(new Uint8Array(ct), iv.length);
+  // base64 encode
+  let bin = '';
+  blob.forEach(b => bin += String.fromCharCode(b));
+  return btoa(bin);
+}
+
+// Decrypt a string encrypted by encryptString. Returns '' on any failure
+// (wrong password, corrupted blob, empty input).
+async function decryptString(encoded, passphrase, saltStr) {
+  if (!encoded) return '';
+  try {
+    const bin = atob(encoded);
+    const blob = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) blob[i] = bin.charCodeAt(i);
+    const iv = blob.slice(0, 12);
+    const ct = blob.slice(12);
+    const key = await deriveKey(passphrase, saltStr);
+    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
+    return new TextDecoder().decode(pt);
+  } catch (e) {
+    return ''; // wrong password or corrupted — treat as empty
+  }
+}
+
 // ===== MODELS =====
 const DEFAULT_MODELS = [
   { id: 'openai/gpt-5.5', name: 'GPT-5.5' },
@@ -865,13 +924,26 @@ async function syncToCloud() {
     const { data: cr } = await supabase.from('user_data').select('data').eq('user_id', currentUser.id).single();
     const ld = { ...state };
     delete ld.isStreaming;
+    // Strip raw keys before upload — we'll add encrypted versions instead
     delete ld.apiKey;
+    delete ld.openaiKey;
+    // Encrypt the keys with the session password (login password)
+    if (sessionPassword) {
+      ld.apiKeyEnc = await encryptString(state.apiKey, sessionPassword, currentUser.id);
+      ld.openaiKeyEnc = await encryptString(state.openaiKey, sessionPassword, currentUser.id);
+    }
     let merged = ld;
     if (cr?.data) merged = mergeStates(cr.data, ld);
     await supabase.from('user_data').upsert({ user_id: currentUser.id, data: merged, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    // Preserve current local plaintext keys across the in-memory merge
     const k = state.apiKey;
+    const ok = state.openaiKey;
     state = deepMerge(state, merged);
     state.apiKey = k;
+    state.openaiKey = ok;
+    // Strip encrypted forms from in-memory state — they only live in the cloud
+    delete state.apiKeyEnc;
+    delete state.openaiKeyEnc;
   } catch (e) { console.error(e); }
 }
 
@@ -880,9 +952,28 @@ async function loadFromCloud() {
   try {
     const { data, error } = await supabase.from('user_data').select('data').eq('user_id', currentUser.id).single();
     if (error || !data?.data) return false;
-    const k = state.apiKey;
-    state = mergeStates(data.data, state);
-    state.apiKey = k;
+    const cloudData = data.data;
+    // Decrypt keys if present and we have the session password
+    let decryptedApi = '';
+    let decryptedOpenai = '';
+    if (sessionPassword) {
+      if (cloudData.apiKeyEnc) {
+        decryptedApi = await decryptString(cloudData.apiKeyEnc, sessionPassword, currentUser.id);
+      }
+      if (cloudData.openaiKeyEnc) {
+        decryptedOpenai = await decryptString(cloudData.openaiKeyEnc, sessionPassword, currentUser.id);
+      }
+    }
+    // Preserve any locally-entered keys if cloud decryption failed/empty
+    const localApi = state.apiKey;
+    const localOpenai = state.openaiKey;
+    state = mergeStates(cloudData, state);
+    // Apply decrypted keys, falling back to whatever was already local
+    state.apiKey = decryptedApi || localApi || '';
+    state.openaiKey = decryptedOpenai || localOpenai || '';
+    // Strip encrypted forms from in-memory state — they only live in the cloud
+    delete state.apiKeyEnc;
+    delete state.openaiKeyEnc;
     await saveState();
     return true;
   } catch (e) { return false; }
@@ -949,6 +1040,7 @@ async function handleAuth() {
     else result = await supabase.auth.signInWithPassword({ email, password: pass });
     if (result.error) throw result.error;
     currentUser = result.data.user;
+    sessionPassword = pass; // held in memory for this session only, used to encrypt/decrypt keys
     document.getElementById('logoutBtn').style.display = 'flex';
     document.getElementById('syncBtn').style.display = 'flex';
     await loadFromCloud();
@@ -963,6 +1055,7 @@ async function handleAuth() {
 async function handleLogout() {
   if (supabase) await supabase.auth.signOut();
   currentUser = null;
+  sessionPassword = null;
   isOfflineMode = false;
   document.getElementById('loginScreen').classList.remove('hidden');
   document.getElementById('appContainer').classList.remove('visible');
@@ -2456,6 +2549,10 @@ function saveSettings() {
   renderMessages();
   closeSettings();
   showToast('Settings saved', false);
+  // Push updated (encrypted) keys to cloud so they survive cache clears + sync to other devices
+  if (supabase && currentUser && sessionPassword) {
+    syncToCloud();
+  }
 }
 
 function toggleApiVis() {
