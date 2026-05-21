@@ -1584,6 +1584,7 @@ async function sendMessage() {
   state.isStreaming = true;
   updateSendBtn();
   abortController = new AbortController();
+  let streamTickerId = null; // hoisted so finally can clear it on abort/error
 
   try {
     await summarizeOlderMessages(chat);
@@ -1606,18 +1607,55 @@ async function sendMessage() {
       throw new Error(err.error?.message || `Error ${resp.status}`);
     }
 
-    document.getElementById('typing')?.remove();
+    // Prepare the bubble but DON'T remove the typing dots yet —
+    // they stay until the first character is actually displayed.
+    // If the model fails silently, dots vanish into empty bubble = failure signal.
     const msgEl = document.createElement('div');
     msgEl.className = 'message assistant';
     msgEl.innerHTML = `<div class="message-label">${escapeHtml(state.aiLabel || 'Kai')}</div><div class="message-bubble"></div>`;
     area.appendChild(msgEl);
     const bubble = msgEl.querySelector('.message-bubble');
+    msgEl.style.display = 'none'; // hidden until first char paints
 
-    let full = '';
+    let full = '';        // everything received so far (committed to state at end)
+    let visible = '';     // what's currently shown on screen
+    let pending = '';     // buffer waiting to be revealed
     let realModel = '';
+    let dotsRemoved = false;
+
+    // Smoothing ticker: drains `pending` into `visible` at a steady pace.
+    // Base rate: ~1 char per 12ms = ~80 chars/sec, which feels like natural typing.
+    // If the buffer gets long, it speeds up so we don't fall behind.
+    const startTicker = () => {
+      if (streamTickerId) return;
+      streamTickerId = setInterval(() => {
+        if (!pending.length) return;
+        // Adaptive: drain faster if buffer is large
+        let take = 1;
+        if (pending.length > 80)  take = 2;
+        if (pending.length > 200) take = 4;
+        if (pending.length > 500) take = 8;
+        const chunk = pending.slice(0, take);
+        pending = pending.slice(take);
+        visible += chunk;
+        // First character: remove typing dots, reveal the bubble
+        if (!dotsRemoved) {
+          document.getElementById('typing')?.remove();
+          msgEl.style.display = '';
+          dotsRemoved = true;
+        }
+        bubble.innerHTML = formatMarkdown(visible);
+      }, 12);
+    };
+    const stopTicker = () => {
+      if (streamTickerId) { clearInterval(streamTickerId); streamTickerId = null; }
+    };
+
     const reader = resp.body.getReader();
     const dec = new TextDecoder();
     let buf = '';
+
+    startTicker();
 
     while (true) {
       const { done, value } = await reader.read();
@@ -1635,11 +1673,33 @@ async function sendMessage() {
           const delta = parsed.choices?.[0]?.delta?.content;
           if (delta) {
             full += delta;
-            bubble.innerHTML = formatMarkdown(full);
-            // FIX #7: NO auto-scroll during streaming — user scrolls themselves
+            pending += delta;
           }
         } catch (e) { /* skip parse errors */ }
       }
+    }
+
+    // Network done. Drain the rest of the buffer fast so the user isn't
+    // staring at a slow trickle after the model has finished.
+    while (pending.length) {
+      await new Promise(r => setTimeout(r, 4));
+      const take = Math.min(pending.length, 20);
+      visible += pending.slice(0, take);
+      pending = pending.slice(take);
+      if (!dotsRemoved && visible.length) {
+        document.getElementById('typing')?.remove();
+        msgEl.style.display = '';
+        dotsRemoved = true;
+      }
+      bubble.innerHTML = formatMarkdown(visible);
+    }
+    stopTicker();
+
+    // If nothing ever displayed, the model failed silently. Show the empty bubble
+    // and leave dots removed so the user sees the dead-air signal.
+    if (!dotsRemoved) {
+      document.getElementById('typing')?.remove();
+      msgEl.style.display = '';
     }
 
     chat.messages.push({ role: 'assistant', content: full, model: realModel || chat.model });
@@ -1655,6 +1715,7 @@ async function sendMessage() {
       console.error(err);
     }
   } finally {
+    if (streamTickerId) { clearInterval(streamTickerId); streamTickerId = null; }
     state.isStreaming = false;
     abortController = null;
     updateSendBtn();
