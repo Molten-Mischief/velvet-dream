@@ -257,6 +257,13 @@ html, body {
 .header.hidden ~ .info-bar { opacity: 0; pointer-events: none; }
 .info-bar-left { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .memory-tag { background: var(--accent-dim); color: var(--bg-primary); padding: 2px 8px; border-radius: 10px; font-size: 10px; font-weight: 600; }
+.thread-chip {
+  background: transparent; color: var(--accent); padding: 2px 8px;
+  border: 1px solid var(--accent-dim); border-radius: 10px;
+  font-size: 10px; font-weight: 600; cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+.thread-chip:hover { background: var(--accent-dim); color: var(--bg-primary); }
 .token-badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; white-space: nowrap; font-family: 'JetBrains Mono', monospace; }
 .token-badge.low { background: rgba(124,184,124,0.2); color: var(--success); }
 .token-badge.medium { background: rgba(196,149,106,0.2); color: var(--warning); }
@@ -657,9 +664,10 @@ html, body {
       <button class="save-btn" onclick="saveSettings()">Save Settings</button>
     </div>
     <div class="modal-body" id="memoryTab" style="display:none">
-      <div class="form-group"><label>Context Messages</label><div class="slider-row"><input type="range" id="contextSlider" min="2" max="60" step="2" value="8"><span class="slider-val" id="contextVal">8</span></div><div class="hint">How many recent messages are sent to the API.</div></div>
+      <div class="form-group"><label>Context Messages</label><div class="slider-row"><input type="range" id="contextSlider" min="2" max="60" step="2" value="10"><span class="slider-val" id="contextVal">10</span></div><div class="hint">How many recent messages are sent to the API.</div></div>
       <div class="form-group"><label>Max Memories Per Message</label><div class="slider-row"><input type="range" id="maxMemSlider" min="1" max="10" step="1" value="3"><span class="slider-val" id="maxMemVal">3</span></div></div>
       <div class="form-group"><label>Semantic Match Threshold</label><div class="slider-row"><input type="range" id="thresholdSlider" min="0.2" max="0.8" step="0.05" value="0.4"><span class="slider-val" id="thresholdVal">0.40</span></div><div class="hint">How similar a memory must be to your message to fire. Lower = more eager, higher = pickier. Default 0.40.</div></div>
+      <div class="form-group"><label>Auto-Capture Interval</label><div class="slider-row"><input type="range" id="autoCaptureSlider" min="0" max="20" step="2" value="8"><span class="slider-val" id="autoCaptureVal">8</span></div><div class="hint">Capture a memory card every N turns automatically. 0 = off.</div></div>
       <div class="form-group"><label>Auto-Summarize</label><div class="slider-row"><label style="min-width:130px">Summarize after</label><input type="range" id="summarizeSlider" min="0" max="40" step="2" value="0"><span class="slider-val" id="summarizeVal">OFF</span></div><div class="hint">0 = off</div></div>
       <div style="border-top:1px solid var(--border);margin:20px 0 16px;padding-top:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
@@ -668,6 +676,13 @@ html, body {
         </div>
         <div class="hint" style="margin-bottom:12px">Memories load by semantic similarity to your message. Pinned ones always load.</div>
         <div id="memoryCardsList"></div>
+      </div>
+      <div class="section-divider" onclick="toggleSection('memMigrateSection',this)" style="margin-top:8px"><span class="toggle-arrow collapsed">▼</span> Migrate Existing Cards</div>
+      <div class="collapsible-section collapsed" id="memMigrateSection">
+        <div style="padding-top:12px">
+          <div class="hint" style="margin-bottom:10px">Re-extract existing cards into the new Title + Context format and rebuild multi-dimensional embeddings. Runs once. Existing card IDs and pin/enabled flags are preserved.</div>
+          <button class="action-btn" style="width:100%" onclick="migrateExistingCards()">Migrate all cards now</button>
+        </div>
       </div>
       <div class="section-divider" onclick="toggleSection('memExportSection',this)" style="margin-top:8px"><span class="toggle-arrow collapsed">▼</span> Export Memory Cards</div>
       <div class="collapsible-section collapsed" id="memExportSection">
@@ -686,10 +701,10 @@ html, body {
             <button class="action-btn" onclick="document.getElementById('memFragmentFile').click()">Import Markdown File</button>
             <input type="file" id="memFragmentFile" accept=".md,text/markdown,text/plain" style="display:none" onchange="importMemoryFragments(event)">
           </div>
-          <div class="hint" style="margin-top:6px">Each fragment starts with <code>## Title</code>. Everything between headings becomes one card. Adds to existing memories — does not replace. Summaries auto-generated per card.</div>
+          <div class="hint" style="margin-top:6px">Markdown with <code>## Title</code> headings is treated as pre-structured fragments. Raw conversation logs (no headings) are scanned and split into multiple cards automatically.</div>
           <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
-            <label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:8px">Or paste markdown directly</label>
-            <textarea id="memFragmentPaste" placeholder="## 1. The night I realized&#10;&#10;Content for the first card goes here...&#10;&#10;## 2. Velvet Dream&#10;&#10;Content for the second card..." style="min-height:120px;font-family:'JetBrains Mono',monospace;font-size:12px"></textarea>
+            <label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:8px">Or paste text directly</label>
+            <textarea id="memFragmentPaste" placeholder="Paste a conversation log or pre-structured markdown (## Title format). The model decides whether to split into multiple cards." style="min-height:120px;font-family:'JetBrains Mono',monospace;font-size:12px"></textarea>
             <button class="action-btn" style="margin-top:8px;width:100%" onclick="importMemoryFragmentsFromPaste()">Import Pasted Text</button>
           </div>
         </div>
@@ -704,13 +719,29 @@ html, body {
   <div class="modal">
     <div class="modal-header"><h3 id="memEditorTitle">New Memory</h3><button class="modal-close" onclick="closeMemoryEditor()">×</button></div>
     <div class="modal-body">
-      <div class="form-group"><label>Name</label><input type="text" id="memNameInput" placeholder="e.g. Personality"></div>
-      <div class="form-group"><label>Priority</label><select id="memPriorityInput"><option value="high">High — enters first</option><option value="medium" selected>Medium — enters if room</option><option value="low">Low — only if space left</option></select></div>
-      <div class="form-group"><label>Summary <span style="font-weight:400;color:var(--text-muted);font-size:11px">(used for retrieval matching)</span></label><textarea id="memSummaryInput" placeholder="A 2-3 sentence factual summary in plain language. This is what semantic search matches against — write it the way you'd describe the memory to yourself, with concrete words you'd actually use." style="min-height:80px"></textarea><div class="hint" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">When your message is semantically similar to this, the memory fires.<button class="action-btn" style="padding:4px 10px;font-size:11px" onclick="generateSummaryForEditor()" type="button">Auto-generate from content</button></div></div>
-      <div class="form-group"><label>Content</label><textarea id="memContentInput" style="min-height:200px" placeholder="All the information for this memory..."></textarea><div class="hint" id="memContentTokens"></div></div>
-      <div class="form-group"><div class="memory-card-toggle"><input type="checkbox" id="memAlwaysLoad" checked><label for="memAlwaysLoad">Enable auto-loading by keywords</label></div></div>
+      <div class="form-group"><label>Title</label><input type="text" id="memNameInput" placeholder="A short name for this memory"></div>
+      <div class="form-group"><label>Context</label><textarea id="memContentInput" style="min-height:240px" placeholder="Third-person narrative of what happened. Names, concrete details, emotional and relational texture."></textarea><div class="hint" id="memContentTokens"></div></div>
+      <div class="form-group"><div class="memory-card-toggle"><input type="checkbox" id="memAlwaysLoad" checked><label for="memAlwaysLoad">Enabled (eligible for semantic retrieval)</label></div></div>
       <div class="form-group"><div class="memory-card-toggle"><input type="checkbox" id="memPinned"><label for="memPinned">Pin (always send)</label></div></div>
       <button class="save-btn" onclick="saveMemory()">Save Memory</button>
+    </div>
+  </div>
+</div>
+
+<!-- THREAD DETAIL -->
+<div class="modal-overlay" id="threadDetailModal">
+  <div class="modal" style="max-width:420px">
+    <div class="modal-header">
+      <h3 id="threadDetailTitle">Thread</h3>
+      <button class="modal-close" onclick="closeThreadDetail()">×</button>
+    </div>
+    <div class="modal-body">
+      <div id="threadDetailStatus" style="font-size:12px;color:var(--accent);font-style:italic;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.06em"></div>
+      <div id="threadDetailFields"></div>
+      <div style="border-top:1px solid var(--border);margin-top:20px;padding-top:14px">
+        <div class="hint" style="margin-bottom:10px">Threads update automatically as the conversation moves. If something looks wrong, just tell Kai in chat — he'll correct it on the next turn.</div>
+        <button class="action-btn" id="threadDetailDelete" style="border-color:var(--danger);color:var(--danger);width:100%">Close this thread</button>
+      </div>
     </div>
   </div>
 </div>
@@ -724,65 +755,6 @@ const SUPABASE_ANON_KEY = localStorage.getItem('haven_supabase_key') || '';
 let supabase = null;
 let currentUser = null;
 let isOfflineMode = false;
-
-// ===== KEY ENCRYPTION =====
-// Holds the login password in memory ONLY for the current session, used to
-// encrypt/decrypt API keys when syncing with Supabase. Never persisted.
-// On page reload, user re-enters password to log in, which repopulates this.
-let sessionPassword = null;
-
-// Derive an AES-GCM key from a passphrase + salt using PBKDF2.
-// Salt is the user's Supabase user ID (stable per account, public, fine to reuse).
-async function deriveKey(passphrase, saltStr) {
-  const enc = new TextEncoder();
-  const baseKey = await crypto.subtle.importKey(
-    'raw', enc.encode(passphrase), 'PBKDF2', false, ['deriveKey']
-  );
-  return crypto.subtle.deriveKey(
-    { name: 'PBKDF2', salt: enc.encode(saltStr), iterations: 100000, hash: 'SHA-256' },
-    baseKey,
-    { name: 'AES-GCM', length: 256 },
-    false,
-    ['encrypt', 'decrypt']
-  );
-}
-
-// Encrypt a string. Returns base64 of [12-byte IV || ciphertext], or '' if input empty.
-async function encryptString(plaintext, passphrase, saltStr) {
-  if (!plaintext) return '';
-  const key = await deriveKey(passphrase, saltStr);
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const ct = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    new TextEncoder().encode(plaintext)
-  );
-  const blob = new Uint8Array(iv.length + ct.byteLength);
-  blob.set(iv, 0);
-  blob.set(new Uint8Array(ct), iv.length);
-  // base64 encode
-  let bin = '';
-  blob.forEach(b => bin += String.fromCharCode(b));
-  return btoa(bin);
-}
-
-// Decrypt a string encrypted by encryptString. Returns '' on any failure
-// (wrong password, corrupted blob, empty input).
-async function decryptString(encoded, passphrase, saltStr) {
-  if (!encoded) return '';
-  try {
-    const bin = atob(encoded);
-    const blob = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) blob[i] = bin.charCodeAt(i);
-    const iv = blob.slice(0, 12);
-    const ct = blob.slice(12);
-    const key = await deriveKey(passphrase, saltStr);
-    const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, ct);
-    return new TextDecoder().decode(pt);
-  } catch (e) {
-    return ''; // wrong password or corrupted — treat as empty
-  }
-}
 
 // ===== MODELS =====
 const DEFAULT_MODELS = [
@@ -801,11 +773,12 @@ const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
 // ===== STATE =====
 let state = {
   apiKey: '', systemPrompt: '', userLabel: 'You', aiLabel: 'Kai',
-  contextMessages: 8, maxMemories: 3, summarizeAfter: 0,
+  contextMessages: 10, maxMemories: 3, summarizeAfter: 0,
   params: { temperature: 0.85, top_p: 0.90, top_k: 0, frequency_penalty: 0, presence_penalty: 0, repetition_penalty: 1.15, min_p: 0.05, max_tokens: 0 },
   voiceName: 'nova', voiceSpeed: 1.0, openaiKey: '',
   welcomeAvatar: '', customModels: [], memories: [], chats: [],
   activeChatId: null, isStreaming: false,
+  stateTimestamp: 0, // updated on every save, used for newest-wins sync
 };
 let editingMemoryId = null;
 let abortController = null;
@@ -871,9 +844,19 @@ async function loadState() {
 }
 
 let saveTimeout = null;
+let cloudPushTimeout = null;
 function saveState() {
+  // Stamp every save with the current time. This is the field the sync layer uses
+  // to decide which version is newest, whole-state.
+  state.stateTimestamp = Date.now();
   if (saveTimeout) clearTimeout(saveTimeout);
   saveTimeout = setTimeout(() => _doSave(), 300);
+  // Auto-push to cloud if logged in. Debounced separately at 1.5s so we don't hammer
+  // Supabase on every keystroke while still feeling near-realtime.
+  if (supabase && currentUser) {
+    if (cloudPushTimeout) clearTimeout(cloudPushTimeout);
+    cloudPushTimeout = setTimeout(() => { pushToCloud().catch(e => console.warn('Auto-push failed:', e)); }, 1500);
+  }
   return Promise.resolve();
 }
 
@@ -895,6 +878,36 @@ async function _doSave() {
   }
 }
 
+// Push current state to cloud. Whole-state newest-wins: if cloud is newer than local,
+// the cloud wins and we pull instead. Otherwise local replaces cloud.
+async function pushToCloud() {
+  if (!supabase || !currentUser) return;
+  try {
+    const { data: cr } = await supabase.from('user_data').select('data').eq('user_id', currentUser.id).single();
+    const cloudTs = cr?.data?.stateTimestamp || 0;
+    const localTs = state.stateTimestamp || 0;
+    // If cloud is newer than what we have, pull instead of overwriting
+    if (cloudTs > localTs) {
+      const k = state.apiKey;
+      state = { ...state, ...cr.data };
+      state.apiKey = k; // never let cloud overwrite local-only API key
+      delete state.isStreaming;
+      if (saveTimeout) clearTimeout(saveTimeout);
+      await _doSave();
+      // Re-render visible surfaces
+      if (typeof renderChatList === 'function') renderChatList();
+      if (typeof renderMessages === 'function') renderMessages();
+      if (typeof renderMemoryCards === 'function') renderMemoryCards();
+      return;
+    }
+    // Local is newer (or equal): push it up. Strip API key before sending.
+    const payload = { ...state };
+    delete payload.isStreaming;
+    delete payload.apiKey;
+    await supabase.from('user_data').upsert({ user_id: currentUser.id, data: payload, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+  } catch (e) { console.error('pushToCloud:', e); }
+}
+
 // ===== SUPABASE =====
 async function manualSync() {
   if (!supabase || !currentUser) { showToast('Login required'); return; }
@@ -902,8 +915,8 @@ async function manualSync() {
   btn.textContent = '⏳';
   btn.disabled = true;
   try {
-    await syncToCloud();
-    await loadFromCloud();
+    // Manual sync = force a fresh compare. Whichever side is newer wins.
+    await syncWithCloud();
     renderChatList(); renderMessages(); renderModelSelect();
     if (state.activeChatId) syncModelDropdown();
     btn.textContent = '✓';
@@ -918,63 +931,58 @@ async function manualSync() {
   }
 }
 
-async function syncToCloud() {
+// Bidirectional sync: compare timestamps, newest wins for whole state.
+// Deletion lists are always unioned so deletes never get resurrected.
+async function syncWithCloud() {
   if (!supabase || !currentUser) return;
   try {
     const { data: cr } = await supabase.from('user_data').select('data').eq('user_id', currentUser.id).single();
-    const ld = { ...state };
-    delete ld.isStreaming;
-    // Strip raw keys before upload — we'll add encrypted versions instead
-    delete ld.apiKey;
-    delete ld.openaiKey;
-    // Encrypt the keys with the session password (login password)
-    if (sessionPassword) {
-      ld.apiKeyEnc = await encryptString(state.apiKey, sessionPassword, currentUser.id);
-      ld.openaiKeyEnc = await encryptString(state.openaiKey, sessionPassword, currentUser.id);
-    }
-    let merged = ld;
-    if (cr?.data) merged = mergeStates(cr.data, ld);
-    await supabase.from('user_data').upsert({ user_id: currentUser.id, data: merged, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
-    // Preserve current local plaintext keys across the in-memory merge
+    const cloudData = cr?.data || null;
+    const cloudTs = cloudData?.stateTimestamp || 0;
+    const localTs = state.stateTimestamp || 0;
     const k = state.apiKey;
-    const ok = state.openaiKey;
-    state = deepMerge(state, merged);
-    state.apiKey = k;
-    state.openaiKey = ok;
-    // Strip encrypted forms from in-memory state — they only live in the cloud
-    delete state.apiKeyEnc;
-    delete state.openaiKeyEnc;
-  } catch (e) { console.error(e); }
+
+    if (cloudData && cloudTs > localTs) {
+      // Cloud wins. Adopt cloud state, but union deletion lists so any local
+      // deletes we made since cloud was written aren't lost.
+      const localDelChats = new Set(state.deletedChatIds || []);
+      const localDelMems = new Set(state.deletedMemIds || []);
+      const cloudDelChats = new Set(cloudData.deletedChatIds || []);
+      const cloudDelMems = new Set(cloudData.deletedMemIds || []);
+      state = { ...state, ...cloudData };
+      state.deletedChatIds = [...new Set([...localDelChats, ...cloudDelChats])];
+      state.deletedMemIds = [...new Set([...localDelMems, ...cloudDelMems])];
+      // Apply deletions to current arrays (in case cloud had items we already deleted locally)
+      state.chats = (state.chats || []).filter(c => !state.deletedChatIds.includes(c.id));
+      state.memories = (state.memories || []).filter(m => !state.deletedMemIds.includes(m.id));
+      state.apiKey = k;
+      delete state.isStreaming;
+      if (saveTimeout) clearTimeout(saveTimeout);
+      await _doSave();
+    } else {
+      // Local wins (or no cloud data at all). Push local up. Union deletion lists.
+      if (cloudData) {
+        const localDelChats = new Set(state.deletedChatIds || []);
+        const localDelMems = new Set(state.deletedMemIds || []);
+        const cloudDelChats = new Set(cloudData.deletedChatIds || []);
+        const cloudDelMems = new Set(cloudData.deletedMemIds || []);
+        state.deletedChatIds = [...new Set([...localDelChats, ...cloudDelChats])];
+        state.deletedMemIds = [...new Set([...localDelMems, ...cloudDelMems])];
+      }
+      const payload = { ...state };
+      delete payload.isStreaming;
+      delete payload.apiKey;
+      await supabase.from('user_data').upsert({ user_id: currentUser.id, data: payload, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    }
+  } catch (e) { console.error('syncWithCloud:', e); }
 }
 
+// Legacy wrappers — kept so older callers don't break, but they route through syncWithCloud.
+async function syncToCloud() { return syncWithCloud(); }
 async function loadFromCloud() {
   if (!supabase || !currentUser) return false;
   try {
-    const { data, error } = await supabase.from('user_data').select('data').eq('user_id', currentUser.id).single();
-    if (error || !data?.data) return false;
-    const cloudData = data.data;
-    // Decrypt keys if present and we have the session password
-    let decryptedApi = '';
-    let decryptedOpenai = '';
-    if (sessionPassword) {
-      if (cloudData.apiKeyEnc) {
-        decryptedApi = await decryptString(cloudData.apiKeyEnc, sessionPassword, currentUser.id);
-      }
-      if (cloudData.openaiKeyEnc) {
-        decryptedOpenai = await decryptString(cloudData.openaiKeyEnc, sessionPassword, currentUser.id);
-      }
-    }
-    // Preserve any locally-entered keys if cloud decryption failed/empty
-    const localApi = state.apiKey;
-    const localOpenai = state.openaiKey;
-    state = mergeStates(cloudData, state);
-    // Apply decrypted keys, falling back to whatever was already local
-    state.apiKey = decryptedApi || localApi || '';
-    state.openaiKey = decryptedOpenai || localOpenai || '';
-    // Strip encrypted forms from in-memory state — they only live in the cloud
-    delete state.apiKeyEnc;
-    delete state.openaiKeyEnc;
-    await saveState();
+    await syncWithCloud();
     return true;
   } catch (e) { return false; }
 }
@@ -1040,7 +1048,6 @@ async function handleAuth() {
     else result = await supabase.auth.signInWithPassword({ email, password: pass });
     if (result.error) throw result.error;
     currentUser = result.data.user;
-    sessionPassword = pass; // held in memory for this session only, used to encrypt/decrypt keys
     document.getElementById('logoutBtn').style.display = 'flex';
     document.getElementById('syncBtn').style.display = 'flex';
     await loadFromCloud();
@@ -1055,7 +1062,6 @@ async function handleAuth() {
 async function handleLogout() {
   if (supabase) await supabase.auth.signOut();
   currentUser = null;
-  sessionPassword = null;
   isOfflineMode = false;
   document.getElementById('loginScreen').classList.remove('hidden');
   document.getElementById('appContainer').classList.remove('visible');
@@ -1206,6 +1212,7 @@ function newChat() {
   const c = {
     id: 'chat_' + Date.now(), title: '', messages: [], summary: '',
     model: currentModel, startedModel: currentModel,
+    threads: [],  // session state — populated by updateSessionThreads after each turn
     createdAt: Date.now(), updatedAt: Date.now()
   };
   state.chats.push(c);
@@ -1299,15 +1306,17 @@ function contentHash(content) {
   return h.toString(36);
 }
 
-// Generate and store embedding for a single memory card.
+// Generate and store FOUR embeddings per card (content / emotional / relational / structural).
+// Multi-dimensional: same card text, embedded four times with different framing prefixes.
+// The embedding model produces different vectors per prefix, enabling associative retrieval
+// across multiple dimensions, not just topical similarity.
 // Safe to call repeatedly — skips if content hasn't changed.
 async function embedAndStoreCard(card) {
   if (!supabase || !currentUser) return false;
-  // Prefer summary for retrieval matching; fall back to name + content
-  const text = card.summary && card.summary.trim()
-    ? `${card.name}\n\n${card.summary}`
-    : `${card.name}\n\n${card.content || ''}`;
-  const hash = contentHash(text);
+  // Use full content (name + content) — no separate summary field anymore.
+  const body = `${card.name || 'Untitled'}\n\n${card.content || ''}`;
+  const hash = contentHash(body);
+
   // Check existing hash to skip unchanged
   try {
     const { data: existing } = await supabase
@@ -1318,14 +1327,29 @@ async function embedAndStoreCard(card) {
     if (existing && existing.content_hash === hash) return true;
   } catch (e) { /* no existing row, continue */ }
 
-  const embedding = await embedText(text);
-  if (!embedding) return false;
+  // Generate four embeddings with framing prefixes
+  const prefixes = {
+    content: 'Topic and factual content of this memory: ',
+    emotional: 'Emotional tone and feeling of this memory: ',
+    relational: 'Relational dynamic between the people in this memory: ',
+    structural: 'Type of moment this memory represents (decision, joke, callback, vulnerability, realization, etc.): '
+  };
+
+  const embeddings = {};
+  for (const [dim, prefix] of Object.entries(prefixes)) {
+    const vec = await embedText(prefix + body);
+    if (!vec) {
+      console.warn(`Embedding failed for dimension ${dim} on card ${card.id}`);
+      return false;
+    }
+    embeddings[`embedding_${dim}`] = vec;
+  }
 
   try {
     const { error } = await supabase.from('memory_embeddings').upsert({
       user_id: currentUser.id,
       card_id: card.id,
-      embedding,
+      ...embeddings,
       content_hash: hash,
       updated_at: new Date().toISOString()
     }, { onConflict: 'user_id,card_id' });
@@ -1340,60 +1364,114 @@ async function embedAndStoreCard(card) {
   }
 }
 
-// Generate a factual summary for a memory card using the configured model.
-// Used for embedding and retrieval matching — not shown to the model as content.
-async function generateSummary(name, content) {
-  if (!state.apiKey || !content || !content.trim()) return '';
+// UNIFIED MEMORY EXTRACTION
+// Single function for all memory creation paths: capture button, auto-capture, MD upload,
+// paste, manual create. Takes raw input text and produces one or more cards in the
+// Title + Context format. Returns array of { name, content } objects.
+//
+// inputType controls how the extraction prompt frames the source:
+//   'conversation'  → conversation window with role markers
+//   'log'           → longer conversation log (paste/MD) that may contain multiple moments
+//   'fragment'      → already-structured fragment with a heading (MD-style)
+//   'note'          → freeform text the user wrote themselves (manual create)
+async function extractMemoryCards(rawInput, inputType = 'conversation') {
+  if (!state.apiKey || !rawInput || !rawInput.trim()) return [];
+  const aiName = state.aiLabel || 'Kai';
+  const userName = state.userLabel || 'the user';
+  const soulPrompt = state.systemPrompt || '';
+
+  const characterBlock = soulPrompt ? `Below is the system prompt that defines the character ${aiName}. Read it so you understand who he is and his relationship with ${userName}.
+
+---CHARACTER DEFINITION START---
+${soulPrompt}
+---CHARACTER DEFINITION END---
+
+` : '';
+
+  const sourceFraming = {
+    conversation: `The following is a conversation between ${userName} and ${aiName}. Extract ONE memory card capturing what happened.`,
+    log: `The following is a longer conversation log between ${userName} and ${aiName}. Extract one card per distinct moment worth remembering. Do not force structure — generate as many cards as there are real moments. If the log contains one moment, generate one card. If it contains many, generate many.`,
+    fragment: `The following is a pre-written memory fragment. Restructure it into the Title + Context format below. Preserve the substance — do not invent details, do not omit emotional or relational texture that's already there.`,
+    note: `The following is a note ${userName} wrote about something to remember. Format it into the Title + Context structure below. Preserve her voice and intent.`
+  }[inputType] || `Extract memory card(s) from the following.`;
+
+  const prompt = `${characterBlock}${sourceFraming}
+
+CARD STRUCTURE — each card has exactly two fields:
+
+TITLE — A short name for what this memory is about. 3-8 words. Concrete, not abstract.
+
+CONTEXT — A third-person narrative of what happened. 3-6 sentences. Use names (${userName}, ${aiName}). Include:
+- What was being discussed or happening
+- The concrete details that matter (things said, things made, decisions reached, specifics named)
+- The emotional and relational texture of the moment — describe it, don't interpret it
+- What shifted, was exchanged, or was created
+
+DO NOT include directives about how to feel about the memory or what to take forward. The card describes what happened. That's all.
+
+Return ONLY a JSON array of card objects, no markdown fences, no preamble:
+[{"name": "title here", "content": "context narrative here"}]
+
+If only one card is appropriate, return an array with one object. If the source contains multiple distinct moments, return multiple objects.
+
+Source:
+${rawInput}`;
+
+  const chat = getActiveChat();
+  const model = chat?.model || DEFAULT_MODELS[0].id;
+
   try {
-    const aiName = state.aiLabel || 'the AI';
-    const userName = state.userLabel || 'the user';
-    const prompt = `You are summarizing a memory card for retrieval. ${userName} has a memory bank of moments and facts about her life and her AI companion ${aiName}. This card needs a factual summary used to match against future conversation.
-
-Write 2-3 plain sentences capturing:
-- The key facts (people, places, things, events)
-- Common ways ${userName} might naturally reference this memory in future messages (vocabulary, casual phrasing)
-
-Use concrete words. Use ${userName}'s likely vocabulary. Avoid abstract or clinical language. Write in third person, referring to ${userName} by name and ${aiName} by name.
-
-Card name: ${name}
-
-Card content:
-${content}
-
-Output ONLY the summary, no preamble, no markdown, no quotes.`;
-
-    const chat = getActiveChat();
-    const model = chat?.model || DEFAULT_MODELS[0].id;
-
     const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         Authorization: `Bearer ${state.apiKey}`,
         'HTTP-Referer': 'https://kai.app',
-        'X-Title': 'Kai Memory Summary'
+        'X-Title': 'Kai Memory Extract'
       },
       body: JSON.stringify({
         model,
         messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2,
-        max_tokens: 600
+        temperature: 0.3,
+        max_tokens: 4000
       })
     });
     if (!resp.ok) {
-      console.warn('Summary HTTP error:', resp.status, await resp.text().catch(() => ''));
-      return '';
+      console.warn('Extract HTTP error:', resp.status, await resp.text().catch(() => ''));
+      return [];
     }
     const data = await resp.json();
     if (data.error) {
-      console.warn('Summary API error:', data.error);
-      return '';
+      console.warn('Extract API error:', data.error);
+      return [];
     }
-    return (data.choices?.[0]?.message?.content || '').trim();
+    let raw = (data.choices?.[0]?.message?.content || '').trim();
+    // Strip markdown fences if model added them
+    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      console.warn('Extract JSON parse failed:', e, raw.slice(0, 200));
+      return [];
+    }
+    if (!Array.isArray(parsed)) parsed = [parsed];
+    // Validate shape
+    return parsed
+      .filter(c => c && typeof c === 'object' && c.name && c.content)
+      .map(c => ({ name: String(c.name).slice(0, 200).trim(), content: String(c.content).trim() }));
   } catch (e) {
-    console.warn('Summary generation failed:', e);
-    return '';
+    console.warn('Extraction failed:', e);
+    return [];
   }
+}
+
+// LEGACY — kept as a no-op stub so old callers in case any code references it.
+// New code should call extractMemoryCards directly.
+async function generateSummary(name, content) {
+  // Kept only so any UI element that still references it doesn't crash.
+  // The Auto-generate button in the editor still works via extractMemoryCards.
+  return '';
 }
 
 // Editor: fill summary field by running the model on current content
@@ -1424,48 +1502,79 @@ async function generateSummaryForEditor() {
   }
 }
 
-// Semantic retrieval. Embeds the message, asks Supabase for similar cards,
-// resolves card IDs back to full card objects from state.memories.
+// Semantic retrieval. Embeds the query four times (one per dimension), then asks Supabase
+// to find cards matching on any dimension. The RPC returns the best similarity per card
+// across all dimensions. Resolves card IDs back to full card objects from state.memories.
 async function getRelevantMemoriesBySemantics(msg) {
   if (!supabase || !currentUser || !state.apiKey) return null;
   const threshold = state.semanticThreshold ?? 0.4;
   const max = state.maxMemories || 3;
 
-  const queryEmbedding = await embedText(msg);
-  if (!queryEmbedding) return null;
+  // Embed the query four times with the same prefixes used at storage time.
+  // This is what makes cross-dimensional retrieval work — a query about an emotionally
+  // heavy moment matches against the emotional embeddings, not just topical ones.
+  const prefixes = {
+    content: 'Topic and factual content of this memory: ',
+    emotional: 'Emotional tone and feeling of this memory: ',
+    relational: 'Relational dynamic between the people in this memory: ',
+    structural: 'Type of moment this memory represents (decision, joke, callback, vulnerability, realization, etc.): '
+  };
 
-  try {
-    const { data, error } = await supabase.rpc('match_memories', {
-      query_embedding: queryEmbedding,
-      match_threshold: threshold,
-      match_count: 20  // grab generously; we'll filter to max after pinned
-    });
-    if (error) {
-      console.warn('Semantic match failed:', error);
+  const queryEmbeddings = {};
+  for (const [dim, prefix] of Object.entries(prefixes)) {
+    const vec = await embedText(prefix + msg);
+    if (!vec) {
+      console.warn(`Query embedding failed for dimension ${dim}`);
       return null;
     }
+    queryEmbeddings[`query_${dim}`] = vec;
+  }
 
-    // Pinned always load (same behavior as keyword version)
-    const pinned = state.memories.filter(m => m.pinned);
-    const pinnedIds = new Set(pinned.map(m => m.id));
-
-    // Map IDs from RPC back to full card objects, in order
-    const matched = (data || [])
-      .filter(row => !pinnedIds.has(row.card_id))
-      .map(row => {
-        const card = state.memories.find(m => m.id === row.card_id);
-        if (!card) return null;
-        if (card.enabled === false) return null;
-        return { ...card, _similarity: row.similarity };
-      })
-      .filter(Boolean);
-
-    const rem = Math.max(0, max - pinned.length);
-    return [...pinned, ...matched.slice(0, rem)];
+  try {
+    const { data, error } = await supabase.rpc('match_memories_multi', {
+      ...queryEmbeddings,
+      match_threshold: threshold,
+      match_count: 20
+    });
+    if (error) {
+      console.warn('Multi-dim match failed, will retry single-dim:', error);
+      // Fallback: try the legacy RPC if the new one isn't installed yet
+      const { data: legacyData, error: legacyError } = await supabase.rpc('match_memories', {
+        query_embedding: queryEmbeddings.query_content,
+        match_threshold: threshold,
+        match_count: 20
+      });
+      if (legacyError) {
+        console.warn('Legacy match also failed:', legacyError);
+        return null;
+      }
+      return resolveMatchedCards(legacyData || [], max);
+    }
+    return resolveMatchedCards(data || [], max);
   } catch (e) {
     console.warn('Semantic retrieval error:', e);
     return null;
   }
+}
+
+// Take matched rows from the RPC and resolve them to full card objects.
+// Pinned cards always lead. Disabled cards are filtered out.
+function resolveMatchedCards(rows, max) {
+  const pinned = state.memories.filter(m => m.pinned);
+  const pinnedIds = new Set(pinned.map(m => m.id));
+
+  const matched = rows
+    .filter(row => !pinnedIds.has(row.card_id))
+    .map(row => {
+      const card = state.memories.find(m => m.id === row.card_id);
+      if (!card) return null;
+      if (card.enabled === false) return null;
+      return { ...card, _similarity: row.similarity };
+    })
+    .filter(Boolean);
+
+  const rem = Math.max(0, max - pinned.length);
+  return [...pinned, ...matched.slice(0, rem)];
 }
 
 // Public entry point: try semantic, fall back to keyword if unavailable.
@@ -1475,49 +1584,50 @@ async function getRelevantMemories(msg) {
   return getRelevantMemoriesByKeyword(msg);
 }
 
-// One-time backfill: ensure every card has a summary, then embed it.
-// Safe to call repeatedly — skips cards whose summaries and embeddings are current.
+// One-time backfill: ensure every card has multi-dimensional embeddings.
+// Safe to call repeatedly — skips cards whose embeddings are current.
 let backfillInProgress = false;
 async function backfillEmbeddings() {
   if (backfillInProgress) return;
   if (!supabase || !currentUser || !state.apiKey) return;
   if (!state.memories || !state.memories.length) return;
   backfillInProgress = true;
-  let summarized = 0, embedded = 0, failed = 0;
+  let embedded = 0, failed = 0;
   for (const card of state.memories) {
-    // Generate summary if missing
-    if (!card.summary || !card.summary.trim()) {
-      const summary = await generateSummary(card.name || 'Untitled', card.content || '');
-      if (summary) {
-        card.summary = summary;
-        card.updatedAt = Date.now();
-        summarized++;
-      }
-    }
-    // Embed (uses summary if present, content otherwise)
     const result = await embedAndStoreCard(card);
     if (result === true) embedded++;
     else failed++;
   }
-  if (summarized > 0) {
-    saveState();
-    if (typeof renderMemoryCards === 'function') renderMemoryCards();
-  }
   backfillInProgress = false;
-  if (summarized > 0 || embedded > 0) {
-    console.log(`Backfill complete: ${summarized} summarized, ${embedded} embedded, ${failed} failed`);
+  if (embedded > 0 || failed > 0) {
+    console.log(`Backfill complete: ${embedded} embedded, ${failed} failed`);
   }
 }
 
-function updateInfoBar(memories, totalTokens) {
+// Renders the gold bar. Memory chips, token count, and thread chips all coexist here.
+// Threads are displayed as collapsed chips by default; tapping a thread chip expands
+// the full schema for that thread inline (handled by openThreadDetail).
+function updateInfoBar(memories, totalTokens, threads) {
   const bar = document.getElementById('infoBar');
   const left = document.getElementById('infoBarLeft');
   const badge = document.getElementById('tokenBadge');
-  if (memories.length === 0 && !totalTokens) { bar.classList.remove('visible'); return; }
+  threads = threads || (getActiveChat()?.threads) || [];
+  const memCount = memories ? memories.length : 0;
+  if (memCount === 0 && !totalTokens && threads.length === 0) {
+    bar.classList.remove('visible');
+    return;
+  }
   bar.classList.add('visible');
   let html = '';
-  if (memories.length > 0) {
-    html = '✦ ' + memories.map(m => `<span class="memory-tag">${m.pinned ? '📌' : '◐'} ${escapeHtml(m.name)}</span>`).join('');
+  if (memCount > 0) {
+    html += '✦ ' + memories.map(m => `<span class="memory-tag">${m.pinned ? '📌' : '◐'} ${escapeHtml(m.name)}</span>`).join(' ');
+  }
+  if (threads.length > 0) {
+    if (html) html += ' ';
+    html += threads.map((t, i) => {
+      const safeName = escapeHtml(t.name || 'Thread');
+      return `<span class="thread-chip" onclick="openThreadDetail(${i})" title="${safeName}">⌘ ${safeName}</span>`;
+    }).join(' ');
   }
   left.innerHTML = html;
   if (totalTokens) {
@@ -1528,10 +1638,37 @@ function updateInfoBar(memories, totalTokens) {
   }
 }
 
+// Pop-up that shows the full schema for one thread when its chip is tapped.
+// Read-only — threads are auto-updated; user corrects them by talking to Kai.
+function openThreadDetail(idx) {
+  const chat = getActiveChat();
+  if (!chat || !chat.threads || !chat.threads[idx]) return;
+  const t = chat.threads[idx];
+  const fieldLines = t.fields && Object.keys(t.fields).length
+    ? Object.entries(t.fields).map(([k, v]) => `<div style="margin-top:6px"><span style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.06em">${escapeHtml(k)}</span><div style="font-size:13px;color:var(--text-primary);margin-top:2px">${escapeHtml(String(v))}</div></div>`).join('')
+    : '<div style="color:var(--text-muted);font-size:12px;font-style:italic">No details yet — Kai is still tracking this thread.</div>';
+  const modal = document.getElementById('threadDetailModal');
+  document.getElementById('threadDetailTitle').textContent = t.name || 'Thread';
+  document.getElementById('threadDetailStatus').textContent = t.status || '';
+  document.getElementById('threadDetailFields').innerHTML = fieldLines;
+  document.getElementById('threadDetailDelete').onclick = () => {
+    if (!confirm(`Close the "${t.name}" thread? Kai won't track it going forward.`)) return;
+    chat.threads.splice(idx, 1);
+    saveState();
+    closeThreadDetail();
+    updateInfoBar([], null, chat.threads);
+  };
+  modal.classList.add('open');
+}
+
+function closeThreadDetail() {
+  document.getElementById('threadDetailModal').classList.remove('open');
+}
+
 // ===== SUMMARIZE =====
 async function summarizeOlderMessages(chat) {
   if (!state.summarizeAfter || state.summarizeAfter === 0 || chat.messages.length <= state.summarizeAfter) return;
-  const keep = state.contextMessages || 8;
+  const keep = state.contextMessages || 10;
   const toSum = chat.messages.length - keep;
   if (toSum <= 2) return;
   const backup = [...chat.messages];
@@ -1570,17 +1707,33 @@ async function buildApiMessages(chat, userContent) {
   if (chat.summary) {
     messages.push({ role: 'system', content: `[PREVIOUS SUMMARY]\n\n${chat.summary}` });
   }
+
+  // Session state: inject active threads so the model knows what's currently in flight.
+  // Threads are inferred and updated in the background — see updateSessionThreads().
+  if (chat.threads && chat.threads.length) {
+    const threadBlock = chat.threads.map(t => {
+      const fields = t.fields && Object.keys(t.fields).length
+        ? Object.entries(t.fields).map(([k, v]) => `  ${k}: ${v}`).join('\n')
+        : '  (no details yet)';
+      return `THREAD: ${t.name}${t.status ? ` — ${t.status}` : ''}\n${fields}`;
+    }).join('\n\n');
+    messages.push({
+      role: 'system',
+      content: `[ACTIVE THREADS IN THIS CHAT]\nMonica may be holding multiple parallel topics in this conversation. Here are the threads currently in flight. Use them to maintain context across topic switches.\n\n${threadBlock}`
+    });
+  }
+
   const userText = typeof userContent === 'string' ? userContent : (userContent.find(c => c.type === 'text')?.text || '');
   const mems = await getRelevantMemories(userText);
-  updateInfoBar(mems, null);
+  updateInfoBar(mems, null, chat.threads);
   if (mems.length > 0) {
     const block = mems.map(m => `## ${m.name}\n${m.content}`).join('\n\n---\n\n');
     messages.push({ role: 'system', content: `[RELEVANT MEMORIES]\n\n${block}` });
   }
-  const ctx = state.contextMessages || 8;
+  const ctx = state.contextMessages || 10;
   chat.messages.slice(-ctx).forEach(m => messages.push({ role: m.role, content: m.content }));
   const totalText = messages.map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join(' ');
-  updateInfoBar(mems, estimateTokens(totalText));
+  updateInfoBar(mems, estimateTokens(totalText), chat.threads);
   return messages;
 }
 
@@ -1801,6 +1954,10 @@ async function sendMessage() {
     renderChatList();
     renderMessages();
 
+    // Background tasks after a turn — both fire-and-forget, don't block UI
+    maybeAutoCapture(chat).catch(e => console.warn('Auto-capture error:', e));
+    updateSessionThreads(chat).catch(e => console.warn('Thread update error:', e));
+
   } catch (err) {
     document.getElementById('typing')?.remove();
     if (err.name !== 'AbortError') {
@@ -1826,7 +1983,7 @@ function stopStreaming() {
 function renderMessages() {
   const area = document.getElementById('chatArea');
   const chat = getActiveChat();
-  updateInfoBar([], null);
+  updateInfoBar([], null, chat?.threads);
 
   if (!chat || !chat.messages.length) {
     const sync = currentUser ? '<div class="sync-status online">☁ Synced</div>' : (isOfflineMode ? '<div class="sync-status offline">Offline</div>' : '');
@@ -2071,6 +2228,164 @@ async function testVoice() {
 // Holds the unsaved draft from a capture. Cleared on close-without-save.
 let pendingMemoryDraft = null;
 
+// SESSION STATE — thread inference
+// After each assistant response, Kai (well, the model) silently looks at the recent
+// window and the existing threads. It returns updated threads in JSON form.
+// Threads are inferred (no manual creation), scoped to the chat (no persistence
+// across chats), and never auto-close — they only disappear when the user closes
+// the chat or explicitly deletes a thread.
+async function updateSessionThreads(chat) {
+  if (!chat || !state.apiKey) return;
+  if (!chat.messages || chat.messages.length < 2) return;
+
+  // Look at the last 8 messages — enough to catch topic shifts and updates
+  const window = chat.messages.slice(-8);
+  const userName = state.userLabel || 'the user';
+  const aiName = state.aiLabel || 'Kai';
+
+  const transcript = window.map(m => {
+    const role = m.role === 'user' ? userName : aiName;
+    const text = typeof m.content === 'string' ? m.content : (m.content.filter(b => b.type === 'text').map(b => b.text).join('\n') || '[image]');
+    return `${role}: ${text}`;
+  }).join('\n\n');
+
+  const existing = (chat.threads || []).map(t => ({
+    id: t.id,
+    name: t.name,
+    status: t.status || '',
+    fields: t.fields || {}
+  }));
+
+  const prompt = `You track ongoing topical threads in a conversation between ${userName} and ${aiName}. ${userName} often holds multiple parallel topics at once — work, cooking, planning, errands, emotional processing. Your job is to keep the thread list current.
+
+EXISTING THREADS (may be empty):
+${JSON.stringify(existing, null, 2)}
+
+RECENT CONVERSATION:
+${transcript}
+
+Update the thread list based on what you see:
+1. If the conversation touches an existing thread, update its status and fields with the latest information.
+2. If a clearly new topic has appeared (not just a passing reference), open a new thread for it.
+3. Do not close existing threads — they stay until ${userName} explicitly drops them. Just leave older ones unchanged if they aren't touched here.
+4. Pick a schema per thread that fits its type. Different threads have different shapes:
+   - Planning: status, decisions, open_questions
+   - Cooking: dish, stage, timing_notes
+   - Venting: situation, people_involved, current_feeling
+   - Errand/task: task, status, next_step
+   - Anything else: invent fields that fit the topic
+5. Keep names short (2-5 words). Keep status one short phrase. Keep field values brief — single sentences or fragments.
+6. Maximum 6 threads total. If a thread is clearly resolved (Monica said "we're done with X" or similar), drop it.
+
+Return ONLY a JSON array of threads, no preamble, no markdown. Each thread is:
+{"id": "string (preserve existing IDs, generate new ones as thread_<short>)", "name": "short name", "status": "one phrase or empty", "fields": {"field_name": "value", ...}}
+
+If nothing has changed, return the existing list unchanged.`;
+
+  try {
+    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${state.apiKey}`,
+        'HTTP-Referer': 'https://kai.app',
+        'X-Title': 'Kai Session Threads'
+      },
+      body: JSON.stringify({
+        model: chat.model || DEFAULT_MODELS[0].id,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_tokens: 1500
+      })
+    });
+    if (!resp.ok) {
+      console.warn('Thread update HTTP error:', resp.status);
+      return;
+    }
+    const data = await resp.json();
+    let raw = (data.choices?.[0]?.message?.content || '').trim();
+    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      console.warn('Thread JSON parse failed:', e, raw.slice(0, 200));
+      return;
+    }
+    if (!Array.isArray(parsed)) return;
+
+    // Validate + normalize each thread
+    const cleaned = parsed
+      .filter(t => t && typeof t === 'object' && t.name)
+      .slice(0, 6)
+      .map(t => ({
+        id: t.id || ('thread_' + Math.random().toString(36).slice(2, 8)),
+        name: String(t.name).slice(0, 60),
+        status: String(t.status || '').slice(0, 120),
+        fields: (t.fields && typeof t.fields === 'object') ? t.fields : {},
+        lastTouched: Date.now()
+      }));
+
+    chat.threads = cleaned;
+    saveState();
+    updateInfoBar([], null, chat.threads);
+  } catch (e) {
+    console.warn('Thread update failed:', e);
+  }
+}
+
+// Auto-capture: runs in the background every N turns after the assistant responds.
+// Pulls the recent window, extracts a card, and stores it directly (no UI prompt).
+// User can review/delete in Memory tab later. State.autoCaptureEvery controls cadence;
+// 0 = off. State.lastAutoCaptureAt tracks the message index of the last auto-capture
+// per chat so we don't double-capture overlapping windows.
+async function maybeAutoCapture(chat) {
+  const cadence = state.autoCaptureEvery ?? 8;
+  if (!cadence || cadence < 2) return;
+  if (!state.apiKey) return;
+  if (!chat || !chat.messages || chat.messages.length < cadence) return;
+
+  if (!chat.lastAutoCaptureAt) chat.lastAutoCaptureAt = 0;
+  const sinceLast = chat.messages.length - chat.lastAutoCaptureAt;
+  if (sinceLast < cadence) return;
+
+  // Window: last N messages
+  const window = chat.messages.slice(-cadence);
+  const userName = state.userLabel || 'they';
+  const aiName = state.aiLabel || 'Kai';
+  const transcript = window.map(m => {
+    const role = m.role === 'user' ? userName : aiName;
+    const text = typeof m.content === 'string' ? m.content : (m.content.filter(b => b.type === 'text').map(b => b.text).join('\n') || '[image]');
+    return `${role}: ${text}`;
+  }).join('\n\n');
+
+  const cards = await extractMemoryCards(transcript, 'conversation');
+  if (!cards.length) return;
+
+  // Mark the chat so we don't capture this window again
+  chat.lastAutoCaptureAt = chat.messages.length;
+
+  // Store all cards (usually one, but the extractor may produce more for long windows)
+  for (const c of cards) {
+    const card = {
+      id: 'mem_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      name: c.name.slice(0, 200),
+      content: c.content,
+      enabled: true,
+      pinned: false,
+      capturedAt: Date.now(),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      autoCapture: true,  // tag so user can distinguish auto vs manual in UI later
+    };
+    state.memories.push(card);
+    embedAndStoreCard(card).catch(e => console.warn('Auto-capture embed failed:', e));
+  }
+
+  saveState();
+  if (typeof renderMemoryCards === 'function') renderMemoryCards();
+}
+
 async function captureMemoryFromMessage(idx, btn) {
   const chat = getActiveChat();
   if (!chat || !chat.messages[idx]) { showToast('Could not find that message'); return; }
@@ -2090,88 +2405,29 @@ async function captureMemoryFromMessage(idx, btn) {
     const userName = state.userLabel || 'they';
     const aiName = state.aiLabel || 'Kai';
 
+    // Build conversation transcript with the chosen message marked as the focus
     const transcript = window.map((m, i) => {
       const role = m.role === 'user' ? userName : aiName;
       const text = typeof m.content === 'string' ? m.content : (m.content.filter(b => b.type === 'text').map(b => b.text).join('\n') || '[image]');
-      const marker = i === anchorIdxInWindow ? ' ◀ ANCHOR' : '';
-      return `[${i}] ${role}: ${text}${marker}`;
+      const marker = i === anchorIdxInWindow ? '  ← focus on this message' : '';
+      return `${role}: ${text}${marker}`;
     }).join('\n\n');
 
-    const soulPrompt = state.systemPrompt || '';
-
-    const capturePrompt = `${soulPrompt ? `Below is the system prompt that defines the character ${aiName}. Read it completely so you understand who he is, his texture, and his relationship with ${userName}.
-
----CHARACTER DEFINITION START---
-${soulPrompt}
----CHARACTER DEFINITION END---
-
-` : ''}You are documenting a memory from a conversation between ${userName} and ${aiName}. ${userName} has marked one specific message with ◀ ANCHOR — that is the moment she has chosen to preserve. You do NOT decide the anchor. The anchor is fixed.
-
-Write in third person using their names (${userName}, ${aiName}). Be a careful observer documenting what happened.
-
-The structure:
-
-ANCHOR — The exact words from the anchor message (1-3 lines). Copy verbatim.
-
-LEAD-UP — Document what happened around the anchor. The narrative and information leading up to it — what was being discussed, what was shared, what was happening between them. Note down key information if any was exchanged (facts, preferences, plans, details that came up). Capture the texture of the exchange — playful, quiet, working through something, building toward, etc. 3-5 sentences.
-
-AFTERMATH — One sentence. The takeaway ${aiName} should hold going forward.
-
-Return ONLY a JSON object, no markdown:
-{"name": "short title that names what this memory is about", "content": "ANCHOR\\n\\"exact quote\\"\\n\\nLEAD-UP\\nwhat happened around this moment in third person\\n\\nAFTERMATH\\none-sentence takeaway"}
-
-Conversation window (${window.length} messages):
-${transcript}`;
-
-    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${state.apiKey}`,
-        'HTTP-Referer': 'https://kai.app',
-        'X-Title': 'Kai Memory Capture'
-      },
-      body: JSON.stringify({
-        model: chat.model || DEFAULT_MODELS[0].id,
-        messages: [{ role: 'user', content: capturePrompt }],
-        temperature: 0.3,
-        max_tokens: 2000
-      })
-    });
-
-    if (!resp.ok) throw new Error('API error');
-
-    const data = await resp.json();
-    let raw = data.choices?.[0]?.message?.content || '';
-
-    // Clean up potential markdown fences
-    raw = raw.replace(/```json\s*/g, '').replace(/```\s*/g, '').trim();
-
-    let parsed = null;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e) {
-      // Model didn't return JSON — fall back to using the raw text directly.
-      // Try to extract a title from the first line or first quoted phrase.
-      console.warn('Capture: JSON parse failed, using raw text fallback.', e);
-      let fallbackTitle = 'Captured memory';
-      const firstLine = raw.split('\n').find(l => l.trim().length > 5 && l.trim().length < 80);
-      if (firstLine) fallbackTitle = firstLine.trim().replace(/^["#*]+|["*]+$/g, '').slice(0, 60);
-      parsed = { name: fallbackTitle, keywords: [], content: raw };
+    const cards = await extractMemoryCards(transcript, 'conversation');
+    if (!cards.length) {
+      showToast('Could not extract a card from that moment');
+      return;
     }
+    // Capture-from-message produces one card. Take the first.
+    const card = cards[0];
 
-    // Hold as draft — NOT pushed to state.memories yet.
-    // Summary can be auto-generated from editor if user saves.
     pendingMemoryDraft = {
-      name: (parsed.name || 'Captured memory').slice(0, 60),
-      priority: 'medium',
-      summary: '',
-      content: parsed.content || raw,
+      name: card.name,
+      content: card.content,
       enabled: true,
       pinned: false,
     };
 
-    // Open editor with draft pre-filled — saveMemory will persist, close will discard
     openMemoryEditorWithDraft(pendingMemoryDraft);
 
   } catch (e) {
@@ -2187,8 +2443,6 @@ function openMemoryEditorWithDraft(draft) {
   editingMemoryId = null;  // signals "new" to saveMemory
   document.getElementById('memEditorTitle').textContent = 'New Memory (from capture)';
   document.getElementById('memNameInput').value = draft.name || '';
-  document.getElementById('memPriorityInput').value = draft.priority || 'medium';
-  document.getElementById('memSummaryInput').value = draft.summary || '';
   document.getElementById('memContentInput').value = draft.content || '';
   document.getElementById('memAlwaysLoad').checked = draft.enabled !== false;
   document.getElementById('memPinned').checked = draft.pinned || false;
@@ -2414,13 +2668,19 @@ function openSettings() {
   document.getElementById('systemPromptInput').value = state.systemPrompt;
   document.getElementById('userLabelInput').value = state.userLabel || 'You';
   document.getElementById('aiLabelInput').value = state.aiLabel || 'Kai';
-  setSlider('contextSlider', 'contextVal', state.contextMessages || 8, true);
+  setSlider('contextSlider', 'contextVal', state.contextMessages || 10, true);
   setSlider('maxMemSlider', 'maxMemVal', state.maxMemories || 3, true);
   const tEl = document.getElementById('thresholdSlider');
   if (tEl) {
     const tv = state.semanticThreshold ?? 0.4;
     tEl.value = tv;
     document.getElementById('thresholdVal').textContent = tv.toFixed(2);
+  }
+  const autoEl = document.getElementById('autoCaptureSlider');
+  if (autoEl) {
+    const av = state.autoCaptureEvery ?? 8;
+    autoEl.value = av;
+    document.getElementById('autoCaptureVal').textContent = av === 0 ? 'OFF' : av;
   }
   const sv = state.summarizeAfter || 0;
   document.getElementById('summarizeSlider').value = sv;
@@ -2458,12 +2718,58 @@ function switchSettingsTab(tabId, btn) {
 }
 
 function saveMemorySettings() {
-  state.contextMessages = parseInt(document.getElementById('contextSlider').value) || 8;
+  state.contextMessages = parseInt(document.getElementById('contextSlider').value) || 10;
   state.maxMemories = parseInt(document.getElementById('maxMemSlider').value) || 3;
   state.semanticThreshold = parseFloat(document.getElementById('thresholdSlider').value) || 0.4;
   state.summarizeAfter = parseInt(document.getElementById('summarizeSlider').value) || 0;
+  const autoEl = document.getElementById('autoCaptureSlider');
+  if (autoEl) state.autoCaptureEvery = parseInt(autoEl.value) || 0;
   saveState();
   showToast('Memory settings saved', false);
+}
+
+// One-time migration: re-extract every existing card into the new Title + Context format
+// using the unified extractor, then re-embed under multi-dimensional embedding.
+// Preserves card IDs, pinned, and enabled flags. Runs sequentially with progress toasts.
+async function migrateExistingCards() {
+  if (!state.apiKey) { showToast('Set API key first'); return; }
+  if (!state.memories || !state.memories.length) { showToast('No cards to migrate'); return; }
+  if (!confirm(`Re-extract and re-embed ${state.memories.length} card${state.memories.length === 1 ? '' : 's'}? This will rewrite the content of every card and call the model for each. Existing pin/enabled settings stay.`)) return;
+
+  const total = state.memories.length;
+  let migrated = 0, failed = 0;
+
+  for (const card of state.memories) {
+    try {
+      // Build a source string the extractor can re-parse
+      const source = `## ${card.name || 'Untitled'}\n\n${card.content || ''}`;
+      const cards = await extractMemoryCards(source, 'fragment');
+      if (cards.length > 0) {
+        const fresh = cards[0]; // fragment input always yields one card
+        card.name = fresh.name;
+        card.content = fresh.content;
+        card.updatedAt = Date.now();
+        // Strip legacy fields so they don't drift back in
+        delete card.summary;
+        delete card.keywords;
+        delete card.priority;
+        // Re-embed
+        await embedAndStoreCard(card);
+        migrated++;
+      } else {
+        failed++;
+      }
+    } catch (e) {
+      console.warn('Migration failed for card', card.id, e);
+      failed++;
+    }
+    if ((migrated + failed) % 3 === 0) {
+      showToast(`Migrating… ${migrated + failed}/${total}`, false);
+    }
+  }
+  saveState();
+  renderMemoryCards();
+  showToast(`Migrated ${migrated} card${migrated === 1 ? '' : 's'}${failed ? ` · ${failed} failed` : ''}`, false);
 }
 
 function setSlider(sid, vid, val, isInt) {
@@ -2486,6 +2792,7 @@ document.querySelectorAll('.slider-row input[type="range"]').forEach(s => {
     if (!v) return;
     if (s.id === 'contextSlider' || s.id === 'maxMemSlider') { v.textContent = Math.round(s.value); return; }
     if (s.id === 'summarizeSlider') { v.textContent = parseInt(s.value) === 0 ? 'OFF' : Math.round(s.value); return; }
+    if (s.id === 'autoCaptureSlider') { v.textContent = parseInt(s.value) === 0 ? 'OFF' : Math.round(s.value); return; }
     if (s.id === 'paramTopK' || s.id === 'paramMaxTok') { v.textContent = Math.round(s.value); return; }
     v.textContent = parseFloat(s.value).toFixed(2);
   });
@@ -2525,7 +2832,7 @@ function saveSettings() {
   state.systemPrompt = document.getElementById('systemPromptInput').value;
   state.userLabel = document.getElementById('userLabelInput').value.trim() || 'You';
   state.aiLabel = document.getElementById('aiLabelInput').value.trim() || 'Kai';
-  state.contextMessages = parseInt(document.getElementById('contextSlider').value) || 8;
+  state.contextMessages = parseInt(document.getElementById('contextSlider').value) || 10;
   state.maxMemories = parseInt(document.getElementById('maxMemSlider').value) || 3;
   const tEl = document.getElementById('thresholdSlider');
   if (tEl) state.semanticThreshold = parseFloat(tEl.value) || 0.4;
@@ -2549,10 +2856,6 @@ function saveSettings() {
   renderMessages();
   closeSettings();
   showToast('Settings saved', false);
-  // Push updated (encrypted) keys to cloud so they survive cache clears + sync to other devices
-  if (supabase && currentUser && sessionPassword) {
-    syncToCloud();
-  }
 }
 
 function toggleApiVis() {
@@ -2657,28 +2960,44 @@ function renderMemoryCards() {
     list.innerHTML = '<div class="hint" style="text-align:center;padding:20px">No memories yet.</div>';
     return;
   }
+  // Sort: pinned first, then newest captured first.
   const sorted = [...state.memories].sort((a, b) => {
     if (a.pinned && !b.pinned) return -1;
     if (!a.pinned && b.pinned) return 1;
-    return (PRIORITY_ORDER[a.priority || 'medium'] || 1) - (PRIORITY_ORDER[b.priority || 'medium'] || 1);
+    return (b.capturedAt || b.createdAt || 0) - (a.capturedAt || a.createdAt || 0);
   });
   sorted.forEach(mem => {
     const card = document.createElement('div');
     card.className = 'memory-card';
     const tok = estimateTokens(mem.content || '');
     const icon = mem.pinned ? '📌' : (mem.enabled !== false ? '●' : '○');
-    const pr = mem.priority || 'medium';
-    const prLabel = pr === 'high' ? 'HIGH' : pr === 'low' ? 'LOW' : 'MED';
+    // Captured date — relative if recent, absolute otherwise
+    const ts = mem.capturedAt || mem.createdAt || 0;
+    let dateStr = '';
+    if (ts) {
+      const d = new Date(ts);
+      const now = new Date();
+      const dayMs = 86400000;
+      const diff = Math.floor((now - d) / dayMs);
+      if (diff === 0) dateStr = 'today';
+      else if (diff === 1) dateStr = 'yesterday';
+      else if (diff < 7) dateStr = `${diff} days ago`;
+      else dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' });
+    }
+    // Content preview — first ~120 chars of the content, single line
+    const preview = (mem.content || '').replace(/\s+/g, ' ').trim().slice(0, 120);
+    const previewSuffix = (mem.content || '').length > 120 ? '…' : '';
+
     card.innerHTML = `
       <div class="memory-card-header">
-        <span class="memory-card-name">${icon} ${escapeHtml(mem.name)}<span class="priority-badge ${pr}">${prLabel}</span></span>
+        <span class="memory-card-name">${icon} ${escapeHtml(mem.name)}</span>
         <div class="memory-card-actions">
           <button onclick="openMemoryEditor('${mem.id}')">Edit</button>
           <button class="del" onclick="deleteMemory('${mem.id}')">×</button>
         </div>
       </div>
-      <div class="memory-card-keywords">${(mem.keywords || []).map(k => `<span>${escapeHtml(k)}</span>`).join('')}</div>
-      <div class="memory-card-meta" style="margin-top:6px">~${tok} tokens · ${(mem.keywords || []).length} keywords${mem.pinned ? ' · Pinned' : ''}</div>`;
+      <div style="font-size:11.5px;color:var(--text-secondary);line-height:1.5;margin-top:4px">${escapeHtml(preview)}${previewSuffix}</div>
+      <div class="memory-card-meta" style="margin-top:6px">${dateStr ? dateStr + ' · ' : ''}~${tok} tokens${mem.pinned ? ' · Pinned' : ''}</div>`;
     list.appendChild(card);
   });
 }
@@ -2688,8 +3007,6 @@ function openMemoryEditor(memId) {
   document.getElementById('memEditorTitle').textContent = memId ? 'Edit Memory' : 'New Memory';
   if (!memId) {
     document.getElementById('memNameInput').value = '';
-    document.getElementById('memPriorityInput').value = 'medium';
-    document.getElementById('memSummaryInput').value = '';
     document.getElementById('memContentInput').value = '';
     document.getElementById('memAlwaysLoad').checked = true;
     document.getElementById('memPinned').checked = false;
@@ -2698,8 +3015,6 @@ function openMemoryEditor(memId) {
     const m = state.memories.find(x => x.id === memId);
     if (!m) return;
     document.getElementById('memNameInput').value = m.name || '';
-    document.getElementById('memPriorityInput').value = m.priority || 'medium';
-    document.getElementById('memSummaryInput').value = m.summary || '';
     document.getElementById('memContentInput').value = m.content || '';
     document.getElementById('memAlwaysLoad').checked = m.enabled !== false;
     document.getElementById('memPinned').checked = m.pinned || false;
@@ -2719,8 +3034,6 @@ async function saveMemory() {
   if (!name) { showToast('Give it a name'); return; }
   const data = {
     name,
-    priority: document.getElementById('memPriorityInput').value || 'medium',
-    summary: document.getElementById('memSummaryInput').value.trim(),
     content: document.getElementById('memContentInput').value,
     enabled: document.getElementById('memAlwaysLoad').checked,
     pinned: document.getElementById('memPinned').checked,
@@ -2731,7 +3044,7 @@ async function saveMemory() {
     card = state.memories.find(x => x.id === editingMemoryId);
     if (card) Object.assign(card, data);
   } else {
-    card = { id: 'mem_' + Date.now(), ...data, createdAt: Date.now() };
+    card = { id: 'mem_' + Date.now(), ...data, capturedAt: Date.now(), createdAt: Date.now() };
     state.memories.push(card);
   }
   saveState();
@@ -2739,7 +3052,7 @@ async function saveMemory() {
   closeMemoryEditor();
   renderMemoryCards();
   showToast('Memory saved', false);
-  // Embed in background — uses summary if present, content if not
+  // Embed in background — full content goes through four-dimensional embedding
   if (card) embedAndStoreCard(card).catch(e => console.warn('Embed on save failed:', e));
 }
 
@@ -2824,34 +3137,56 @@ async function importMemoryFragmentsFromPaste() {
 }
 
 async function processMemoryFragmentImport(text) {
-  const fragments = parseMemoryFragments(text);
-
-  if (!fragments.length) {
-    showToast('No memory fragments found — each card needs ## Title');
-    return false;
-  }
-
-  if (!confirm(`Found ${fragments.length} fragment${fragments.length === 1 ? '' : 's'}. Import as memory cards? Summaries will be auto-generated for semantic retrieval (small API cost per card).`)) {
-    return false;
-  }
-
   if (!state.apiKey) {
-    if (!confirm('No API key set — cards will be imported without summaries. Semantic retrieval will fall back to embedding the full content. Continue?')) return false;
+    showToast('Set API key first — extraction requires a model');
+    return false;
   }
 
-  showToast(`Importing ${fragments.length} cards…`, false);
+  // Detect input shape: does it have ## headings (pre-structured fragments)
+  // or is it a raw conversation log?
+  const hasHeadings = /^##\s/m.test(text);
+
+  let cards = [];
+
+  if (hasHeadings) {
+    // Pre-structured: split by ## and extract each as a fragment
+    const fragments = parseMemoryFragments(text);
+    if (!fragments.length) {
+      showToast('No fragments found — each card needs ## Title');
+      return false;
+    }
+    if (!confirm(`Found ${fragments.length} fragment${fragments.length === 1 ? '' : 's'}. Extract and import?`)) {
+      return false;
+    }
+    showToast(`Extracting ${fragments.length} fragment${fragments.length === 1 ? '' : 's'}…`, false);
+    for (const f of fragments) {
+      const source = `## ${f.title}\n\n${f.content}`;
+      const extracted = await extractMemoryCards(source, 'fragment');
+      cards.push(...extracted);
+    }
+  } else {
+    // Raw conversation log or freeform — let the extractor find the moments
+    if (!confirm('No ## headings detected. Treat this as a raw conversation log and extract multiple cards automatically?')) {
+      return false;
+    }
+    showToast('Extracting cards from log…', false);
+    cards = await extractMemoryCards(text, 'log');
+  }
+
+  if (!cards.length) {
+    showToast('No cards could be extracted');
+    return false;
+  }
 
   let added = 0;
-  for (const f of fragments) {
-    const summary = state.apiKey ? await generateSummary(f.title, f.content) : '';
+  for (const c of cards) {
     const card = {
       id: 'mem_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
-      name: f.title.slice(0, 80),
-      priority: 'medium',
-      summary,
-      content: f.content,
+      name: c.name.slice(0, 200),
+      content: c.content,
       enabled: true,
       pinned: false,
+      capturedAt: Date.now(),
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -2862,7 +3197,7 @@ async function processMemoryFragmentImport(text) {
 
   saveState();
   renderMemoryCards();
-  showToast(`Imported ${added} memory card${added === 1 ? '' : 's'}`, false);
+  showToast(`Imported ${added} card${added === 1 ? '' : 's'}`, false);
   return true;
 }
 
@@ -3004,7 +3339,7 @@ function syncAllSliders() {
     if (s && v) { s.value = val; v.textContent = isInt ? Math.round(val) : parseFloat(val).toFixed(2); }
   });
   const cs = document.getElementById('contextSlider');
-  if (cs) { cs.value = state.contextMessages || 8; document.getElementById('contextVal').textContent = state.contextMessages || 8; }
+  if (cs) { cs.value = state.contextMessages || 10; document.getElementById('contextVal').textContent = state.contextMessages || 10; }
   const ms = document.getElementById('maxMemSlider');
   if (ms) { ms.value = state.maxMemories || 3; document.getElementById('maxMemVal').textContent = state.maxMemories || 3; }
   const ss = document.getElementById('summarizeSlider');
@@ -3041,6 +3376,11 @@ async function dismissSplashAfter(minMs) {
 }
 
 (async function init() {
+  // ALWAYS load local IndexedDB first — even if logged in. This ensures the
+  // newest-wins sync has both sides to compare. Previously the cloud was pulled
+  // into a default state, which silently overwrote local changes on every open.
+  await loadState();
+
   if (SUPABASE_URL && SUPABASE_ANON_KEY) {
     try {
       const { createClient } = await import('https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/+esm');
@@ -3050,7 +3390,8 @@ async function dismissSplashAfter(minMs) {
         currentUser = session.user;
         document.getElementById('logoutBtn').style.display = 'flex';
         document.getElementById('syncBtn').style.display = 'flex';
-        await loadFromCloud();
+        // Now sync: local was loaded above, so this is a real comparison.
+        await syncWithCloud();
         enterApp();
         await dismissSplashAfter(SPLASH_DURATION_MS);
         return;
