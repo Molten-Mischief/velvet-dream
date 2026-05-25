@@ -253,6 +253,12 @@ html, body {
   font-size: 11px; color: var(--accent); flex-wrap: wrap; justify-content: space-between;
   transition: opacity 0.2s ease;
 }
+/* When pinned (mobile keyboard open), switch to fixed positioning anchored to
+   the visual viewport top — driven by JS in setupMobileInfoBarPin(). */
+.info-bar.pinned {
+  position: fixed;
+  top: var(--info-bar-pin-top, 0px);
+}
 .info-bar.visible { display: flex; }
 .header.hidden ~ .info-bar { opacity: 0; pointer-events: none; }
 .info-bar-left { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -264,6 +270,11 @@ html, body {
   transition: background 0.15s, color 0.15s;
 }
 .thread-chip:hover { background: var(--accent-dim); color: var(--bg-primary); }
+.thread-chip.archived {
+  opacity: 0.45;
+  border-style: dashed;
+}
+.thread-chip.archived:hover { opacity: 0.7; }
 .token-badge { font-size: 10px; padding: 2px 8px; border-radius: 10px; font-weight: 600; white-space: nowrap; font-family: 'JetBrains Mono', monospace; }
 .token-badge.low { background: rgba(124,184,124,0.2); color: var(--success); }
 .token-badge.medium { background: rgba(196,149,106,0.2); color: var(--warning); }
@@ -1681,7 +1692,9 @@ function updateInfoBar(memories, totalTokens, threads) {
     if (html) html += ' ';
     html += threads.map((t, i) => {
       const safeName = escapeHtml(t.name || 'Thread');
-      return `<span class="thread-chip" onclick="openThreadDetail(${i})" title="${safeName}">⌘ ${safeName}</span>`;
+      const archivedClass = t.archived ? ' archived' : '';
+      const archivedTitle = t.archived ? ' (archived)' : '';
+      return `<span class="thread-chip${archivedClass}" onclick="openThreadDetail(${i})" title="${safeName}${archivedTitle}">⌘ ${safeName}</span>`;
     }).join(' ');
   }
   left.innerHTML = html;
@@ -1693,19 +1706,22 @@ function updateInfoBar(memories, totalTokens, threads) {
   }
 }
 
-// Pop-up that shows the full schema for one thread when its chip is tapped.
+// Pop-up that shows the full summary for one thread when its chip is tapped.
 // Read-only — threads are auto-updated; user corrects them by talking to Kai.
 function openThreadDetail(idx) {
   const chat = getActiveChat();
   if (!chat || !chat.threads || !chat.threads[idx]) return;
   const t = chat.threads[idx];
-  const fieldLines = t.fields && Object.keys(t.fields).length
-    ? Object.entries(t.fields).map(([k, v]) => `<div style="margin-top:6px"><span style="color:var(--text-muted);font-size:11px;text-transform:uppercase;letter-spacing:0.06em">${escapeHtml(k)}</span><div style="font-size:13px;color:var(--text-primary);margin-top:2px">${escapeHtml(String(v))}</div></div>`).join('')
+  const summaryHtml = t.summary && t.summary.trim()
+    ? `<div style="font-size:13px;color:var(--text-primary);line-height:1.5;white-space:pre-wrap">${escapeHtml(t.summary)}</div>`
     : '<div style="color:var(--text-muted);font-size:12px;font-style:italic">No details yet — Kai is still tracking this thread.</div>';
+  const archivedTag = t.archived
+    ? '<div style="color:var(--text-muted);font-size:11px;font-style:italic;margin-bottom:8px">Archived — not currently sent to Kai. Will reactivate if the topic comes up again.</div>'
+    : '';
   const modal = document.getElementById('threadDetailModal');
   document.getElementById('threadDetailTitle').textContent = t.name || 'Thread';
-  document.getElementById('threadDetailStatus').textContent = t.status || '';
-  document.getElementById('threadDetailFields').innerHTML = fieldLines;
+  document.getElementById('threadDetailStatus').textContent = '';
+  document.getElementById('threadDetailFields').innerHTML = archivedTag + summaryHtml;
   document.getElementById('threadDetailDelete').onclick = () => {
     if (!confirm(`Close the "${t.name}" thread? Kai won't track it going forward.`)) return;
     chat.threads.splice(idx, 1);
@@ -1765,17 +1781,19 @@ async function buildApiMessages(chat, userContent) {
 
   // Session state: inject active threads so the model knows what's currently in flight.
   // Threads are inferred and updated in the background — see updateSessionThreads().
+  // Archived threads are not injected (token savings) but reactivate if their topic
+  // returns in conversation.
   if (chat.threads && chat.threads.length) {
-    const threadBlock = chat.threads.map(t => {
-      const fields = t.fields && Object.keys(t.fields).length
-        ? Object.entries(t.fields).map(([k, v]) => `  ${k}: ${v}`).join('\n')
-        : '  (no details yet)';
-      return `THREAD: ${t.name}${t.status ? ` — ${t.status}` : ''}\n${fields}`;
-    }).join('\n\n');
-    messages.push({
-      role: 'system',
-      content: `[ACTIVE THREADS IN THIS CHAT]\nMonica may be holding multiple parallel topics in this conversation. Here are the threads currently in flight. Use them to maintain context across topic switches.\n\n${threadBlock}`
-    });
+    const activeThreads = chat.threads.filter(t => !t.archived);
+    if (activeThreads.length) {
+      const threadBlock = activeThreads.map(t => {
+        return `THREAD: ${t.name}\n${t.summary || '(no details yet)'}`;
+      }).join('\n\n');
+      messages.push({
+        role: 'system',
+        content: `[ACTIVE THREADS IN THIS CHAT]\n${state.userLabel || 'The user'} may be holding multiple parallel topics in this conversation. Here are the threads currently in flight. Use them to maintain context across topic switches.\n\n${threadBlock}`
+      });
+    }
   }
 
   const userText = typeof userContent === 'string' ? userContent : (userContent.find(c => c.type === 'text')?.text || '');
@@ -2289,29 +2307,48 @@ let pendingMemoryDraft = null;
 // Threads are inferred (no manual creation), scoped to the chat (no persistence
 // across chats), and never auto-close — they only disappear when the user closes
 // the chat or explicitly deletes a thread.
+//
+// CADENCE: runs every N turns where N = state.contextMessages (the user-set
+// window size). Rationale: messages inside the window are already being sent
+// to the model verbatim. The updater only needs to fire when a batch of
+// messages is about to fall OUT of the window. This avoids redundant work.
+//
+// Each thread now has:
+//   id, name, summary (prose), lastTouchedTurn, archived (bool),
+//   updatesSincePromotion (counter for portability check)
 async function updateSessionThreads(chat) {
   if (!chat || !state.apiKey) return;
   if (!chat.messages || chat.messages.length < 2) return;
 
-  // Look at the last 8 messages — enough to catch topic shifts and updates
-  const window = chat.messages.slice(-8);
+  // Cadence: only run every N turns where N = window size.
+  const windowSize = state.contextMessages || 8;
+  const turnCount = chat.messages.length;
+  if (chat.lastThreadUpdateAt !== undefined && (turnCount - chat.lastThreadUpdateAt) < windowSize) {
+    return;
+  }
+  chat.lastThreadUpdateAt = turnCount;
+
+  // Look at the most recent batch of messages — exactly the window size, so we
+  // capture the messages about to fall out of context.
+  const recentMessages = chat.messages.slice(-windowSize);
   const userName = state.userLabel || 'the user';
   const aiName = state.aiLabel || 'Kai';
 
-  const transcript = window.map(m => {
+  const transcript = recentMessages.map(m => {
     const role = m.role === 'user' ? userName : aiName;
     const text = typeof m.content === 'string' ? m.content : (m.content.filter(b => b.type === 'text').map(b => b.text).join('\n') || '[image]');
     return `${role}: ${text}`;
   }).join('\n\n');
 
-  const existing = (chat.threads || []).map(t => ({
+  // Only send ACTIVE threads to the updater. Archived threads are not modified.
+  const activeThreads = (chat.threads || []).filter(t => !t.archived);
+  const existing = activeThreads.map(t => ({
     id: t.id,
     name: t.name,
-    status: t.status || '',
-    fields: t.fields || {}
+    summary: t.summary || ''
   }));
 
-  const prompt = `You track ongoing topical threads in a conversation between ${userName} and ${aiName}. ${userName} often holds multiple parallel topics at once — work, cooking, planning, errands, emotional processing. Your job is to keep the thread list current.
+  const prompt = `You track ongoing topical threads in a conversation between ${userName} and ${aiName}. ${userName} often holds multiple parallel topics at once. Your job is to keep the thread list current.
 
 EXISTING THREADS (may be empty):
 ${JSON.stringify(existing, null, 2)}
@@ -2319,26 +2356,22 @@ ${JSON.stringify(existing, null, 2)}
 RECENT CONVERSATION:
 ${transcript}
 
-Update the thread list based on what you see:
-1. If the conversation touches an existing thread, update its status and fields with the latest information.
-2. If a clearly new topic has appeared (not just a passing reference), open a new thread for it.
-3. Do not close existing threads — they stay until ${userName} explicitly drops them. Just leave older ones unchanged if they aren't touched here.
-4. Pick a schema per thread that fits its type. Different threads have different shapes:
-   - Planning: status, decisions, open_questions
-   - Cooking: dish, stage, timing_notes
-   - Venting: situation, people_involved, current_feeling
-   - Errand/task: task, status, next_step
-   - Anything else: invent fields that fit the topic
-5. Keep names short (2-5 words). Keep status one short phrase. Keep field values brief — single sentences or fragments.
-6. Maximum 6 threads total. If a thread is clearly resolved (Monica said "we're done with X" or similar), drop it.
+For each thread, the summary records what was said, what happened, and the details. Names, numbers, decisions, specifics — whatever came up in conversation about that topic. Not interpretation. Not feelings about it. Just the record.
 
-Return ONLY a JSON array of threads, no preamble, no markdown. Each thread is:
-{"id": "string (preserve existing IDs, generate new ones as thread_<short>)", "name": "short name", "status": "one phrase or empty", "fields": {"field_name": "value", ...}}
+Update the thread list:
+1. If recent conversation touches an existing thread, integrate the new information into its summary. Build on what's already there.
+2. Prefer folding new content into existing threads. Only open a new thread if the topic is genuinely separate from all existing threads.
+3. After updating, check the full list: if any two threads are now actually about the same thing (e.g. nectarine snack + flan dessert turned out to be the same dish), merge them — combine their summaries, pick the more accurate name, keep one ID and drop the other.
+4. Do not close existing threads. Just leave older ones unchanged if they aren't touched here.
+
+Return ONLY a JSON object with a "threads" array, no preamble, no markdown:
+{"threads": [{"id": "preserve existing IDs, generate new ones as thread_<short>", "name": "short name 2-5 words", "summary": "prose record of what was said and happened"}]}
 
 If nothing has changed, return the existing list unchanged.`;
 
+  let resp;
   try {
-    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -2350,83 +2383,139 @@ If nothing has changed, return the existing list unchanged.`;
         model: chat.model || DEFAULT_MODELS[0].id,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.2,
-        max_tokens: 1500
+        max_tokens: 2000,
+        response_format: { type: 'json_object' }
       })
     });
-    if (!resp.ok) {
-      console.warn('Thread update HTTP error:', resp.status);
-      return;
-    }
-    const data = await resp.json();
-    let raw = (data.choices?.[0]?.message?.content || '').trim();
-    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e) {
-      console.warn('Thread JSON parse failed:', e, raw.slice(0, 200));
-      return;
-    }
-    if (!Array.isArray(parsed)) return;
-
-    // Validate + normalize each thread
-    const cleaned = parsed
-      .filter(t => t && typeof t === 'object' && t.name)
-      .slice(0, 6)
-      .map(t => ({
-        id: t.id || ('thread_' + Math.random().toString(36).slice(2, 8)),
-        name: String(t.name).slice(0, 60),
-        status: String(t.status || '').slice(0, 120),
-        fields: (t.fields && typeof t.fields === 'object') ? t.fields : {},
-        lastTouched: Date.now()
-      }));
-
-    chat.threads = cleaned;
-    saveState();
-    updateInfoBar([], null, chat.threads);
   } catch (e) {
-    console.warn('Thread update failed:', e);
+    console.warn('Thread update network error:', e);
+    return;
+  }
+  if (!resp.ok) {
+    console.warn('Thread update HTTP error:', resp.status);
+    return;
+  }
+  const data = await resp.json();
+  let raw = (data.choices?.[0]?.message?.content || '').trim();
+  raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.warn('Thread JSON parse failed:', e, raw.slice(0, 200));
+    return;
+  }
+  // Accept both {threads: [...]} and bare array
+  let threadArray;
+  if (Array.isArray(parsed)) threadArray = parsed;
+  else if (parsed && Array.isArray(parsed.threads)) threadArray = parsed.threads;
+  else return;
+
+  // Track which existing thread IDs were touched in this update for the
+  // portability counter. Build a map of old threads by id.
+  const oldThreadsById = {};
+  for (const t of activeThreads) oldThreadsById[t.id] = t;
+
+  // Validate + normalize the updated thread list
+  const updatedActive = threadArray
+    .filter(t => t && typeof t === 'object' && t.name && t.summary)
+    .map(t => {
+      const id = t.id || ('thread_' + Math.random().toString(36).slice(2, 8));
+      const prev = oldThreadsById[id];
+      // Determine if the summary actually changed (substantive update vs noop)
+      const newSummary = String(t.summary).trim();
+      const summaryChanged = !prev || prev.summary !== newSummary;
+      return {
+        id,
+        name: String(t.name).slice(0, 80),
+        summary: newSummary,
+        lastTouchedTurn: summaryChanged ? turnCount : (prev?.lastTouchedTurn ?? turnCount),
+        archived: false,
+        updatesSincePromotion: summaryChanged
+          ? ((prev?.updatesSincePromotion ?? 0) + 1)
+          : (prev?.updatesSincePromotion ?? 0)
+      };
+    });
+
+  // Preserve any archived threads from the existing list (the updater never
+  // sees archived threads, so they pass through untouched).
+  const archived = (chat.threads || []).filter(t => t.archived);
+
+  // ARCHIVE PASS: any active thread untouched + unreferenced in 20+ turns archives.
+  // "Referenced" = the thread's name (or any meaningful word from the name) appears
+  // in the transcript even if the updater didn't add to its summary.
+  const ARCHIVE_AFTER_TURNS = 20;
+  const transcriptLower = transcript.toLowerCase();
+  for (const t of updatedActive) {
+    const turnsSinceTouch = turnCount - (t.lastTouchedTurn || turnCount);
+    if (turnsSinceTouch < ARCHIVE_AFTER_TURNS) continue;
+    // Check for reference: any word from the thread name (3+ chars) appearing
+    // in the recent transcript.
+    const nameWords = (t.name || '').toLowerCase().split(/\W+/).filter(w => w.length >= 3);
+    const referenced = nameWords.some(w => transcriptLower.includes(w));
+    if (!referenced) {
+      t.archived = true;
+    }
+  }
+
+  // REACTIVATION PASS: any archived thread whose name appears in the recent
+  // transcript wakes back up (un-archives, resets touch turn).
+  for (const t of archived) {
+    const nameWords = (t.name || '').toLowerCase().split(/\W+/).filter(w => w.length >= 3);
+    const referenced = nameWords.some(w => transcriptLower.includes(w));
+    if (referenced) {
+      t.archived = false;
+      t.lastTouchedTurn = turnCount;
+    }
+  }
+
+  // PORTABILITY PROMOTION: for any active thread whose updatesSincePromotion
+  // hits the threshold, run a portability check. If portable content exists,
+  // promote to a memory card. Reset the counter regardless of outcome.
+  // Also: any thread archiving on this pass gets a promotion check.
+  const PROMOTE_AFTER_UPDATES = 35;
+  const promotionCandidates = [];
+  for (const t of updatedActive) {
+    if (t.updatesSincePromotion >= PROMOTE_AFTER_UPDATES) {
+      promotionCandidates.push(t);
+      t.updatesSincePromotion = 0;  // reset counter regardless of outcome
+    } else if (t.archived) {
+      promotionCandidates.push(t);
+    }
+  }
+  for (const t of archived) {
+    // Archive-trigger for threads that were archived earlier and just woke up
+    // would have been handled before they archived. Skip these.
+  }
+
+  // Merge active + archived for storage
+  const merged = [...updatedActive, ...archived];
+  chat.threads = merged;
+  saveState();
+  updateInfoBar([], null, chat.threads);
+
+  // Fire portability checks asynchronously so they don't block the next turn.
+  for (const t of promotionCandidates) {
+    promoteThreadIfPortable(t, chat).catch(e => console.warn('Promotion check failed:', e));
   }
 }
 
-// Auto-capture: runs in the background every N turns after the assistant responds.
-// Pulls the recent window, extracts a card, and stores it directly (no UI prompt).
-// User can review/delete in Memory tab later. State.autoCaptureEvery controls cadence;
-// 0 = off. State.lastAutoCaptureAt tracks the message index of the last auto-capture
-// per chat so we don't double-capture overlapping windows.
-async function maybeAutoCapture(chat) {
-  const cadence = state.autoCaptureEvery ?? 8;
-  if (!cadence || cadence < 2) return;
+// Portability promotion: checks whether a thread contains content worth saving
+// as a long-term memory card. Replaces the every-N-turn auto-capture system.
+// Calls extractMemoryCards with inputType 'thread'. The extractor's prompt
+// for 'thread' already asks specifically for portable content only.
+async function promoteThreadIfPortable(thread, chat) {
+  if (!thread || !thread.summary || !thread.summary.trim()) return;
   if (!state.apiKey) return;
-  if (!chat || !chat.messages || chat.messages.length < cadence) return;
-
-  if (!chat.lastAutoCaptureAt) chat.lastAutoCaptureAt = 0;
-  const sinceLast = chat.messages.length - chat.lastAutoCaptureAt;
-  if (sinceLast < cadence) return;
-
-  // Window: last N messages
-  const window = chat.messages.slice(-cadence);
-  const userName = state.userLabel || 'they';
-  const aiName = state.aiLabel || 'Kai';
-  const transcript = window.map(m => {
-    const role = m.role === 'user' ? userName : aiName;
-    const text = typeof m.content === 'string' ? m.content : (m.content.filter(b => b.type === 'text').map(b => b.text).join('\n') || '[image]');
-    return `${role}: ${text}`;
-  }).join('\n\n');
-
+  const source = `Thread: ${thread.name}\n\n${thread.summary}`;
   let cards;
   try {
-    cards = await extractMemoryCards(transcript, 'conversation');
+    cards = await extractMemoryCards(source, 'thread');
   } catch (e) {
-    console.warn('Auto-capture extraction failed:', e);
+    console.warn('Thread promotion extraction failed:', e);
     return;
   }
   if (!cards.length) return;
-
-  // Mark the chat so we don't capture this window again
-  chat.lastAutoCaptureAt = chat.messages.length;
-
-  // Store all cards (usually one, but the extractor may produce more for long windows)
   for (const c of cards) {
     const card = {
       id: 'mem_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
@@ -2438,14 +2527,28 @@ async function maybeAutoCapture(chat) {
       capturedAt: Date.now(),
       createdAt: Date.now(),
       updatedAt: Date.now(),
-      autoCapture: true,  // tag so user can distinguish auto vs manual in UI later
+      autoCapture: true,
+      sourceThread: thread.id,
+      sourceChat: chat?.id
     };
     state.memories.push(card);
-    embedAndStoreCard(card).catch(e => console.warn('Auto-capture embed failed:', e));
+    embedAndStoreCard(card).catch(e => console.warn('Promotion embed failed:', e));
   }
-
   saveState();
-  if (typeof renderMemoryCards === 'function') renderMemoryCards();
+  renderMemoryCards();
+}
+
+// Auto-capture: runs in the background every N turns after the assistant responds.
+// Pulls the recent window, extracts a card, and stores it directly (no UI prompt).
+// User can review/delete in Memory tab later. State.autoCaptureEvery controls cadence;
+// 0 = off. State.lastAutoCaptureAt tracks the message index of the last auto-capture
+// per chat so we don't double-capture overlapping windows.
+// DEPRECATED in wave 15. Replaced by portability-based promotion in
+// updateSessionThreads, which checks whether a thread contains content worth
+// remembering long-term and promotes it to a memory card. Kept as a no-op
+// stub so the existing call site in the send-message flow doesn't crash.
+async function maybeAutoCapture(chat) {
+  return;
 }
 
 async function captureMemoryFromMessage(idx, btn) {
@@ -3469,11 +3572,38 @@ async function dismissSplashAfter(minMs) {
   }
 }
 
+// Mobile keyboard pin: when the on-screen keyboard opens, the visual viewport
+// shrinks and the absolutely-positioned info bar gets pushed off the visible
+// area. Listen to visualViewport changes and switch the bar to fixed
+// positioning anchored to the top of the visible viewport. Toggle back to
+// absolute when the keyboard closes.
+function setupMobileInfoBarPin() {
+  if (!window.visualViewport) return;
+  const bar = document.getElementById('infoBar');
+  if (!bar) return;
+  const update = () => {
+    const vv = window.visualViewport;
+    // Detect keyboard open: visualViewport height significantly less than window height
+    const keyboardOpen = (window.innerHeight - vv.height) > 100;
+    if (keyboardOpen) {
+      // Pin to the top of the visual viewport
+      bar.style.setProperty('--info-bar-pin-top', vv.offsetTop + 'px');
+      bar.classList.add('pinned');
+    } else {
+      bar.classList.remove('pinned');
+      bar.style.removeProperty('--info-bar-pin-top');
+    }
+  };
+  window.visualViewport.addEventListener('resize', update);
+  window.visualViewport.addEventListener('scroll', update);
+}
+
 (async function init() {
   // ALWAYS load local IndexedDB first — even if logged in. This ensures the
   // newest-wins sync has both sides to compare. Previously the cloud was pulled
   // into a default state, which silently overwrote local changes on every open.
   await loadState();
+  setupMobileInfoBarPin();
 
   if (SUPABASE_URL && SUPABASE_ANON_KEY) {
     try {
