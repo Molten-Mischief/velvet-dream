@@ -1270,7 +1270,11 @@ function getRelevantMemoriesByKeyword(msg) {
 // Embed a string using OpenAI text-embedding-3-small via OpenRouter.
 // Returns a 1536-dim vector or null on failure.
 async function embedText(text) {
-  if (!state.apiKey || !text || !text.trim()) return null;
+  if (!state.apiKey) {
+    showToast('Embedding skipped: no API key set');
+    return null;
+  }
+  if (!text || !text.trim()) return null;
   try {
     const resp = await fetch('https://openrouter.ai/api/v1/embeddings', {
       method: 'POST',
@@ -1286,13 +1290,18 @@ async function embedText(text) {
       })
     });
     if (!resp.ok) {
-      console.warn('Embedding failed:', resp.status, await resp.text().catch(() => ''));
+      const bodyText = await resp.text().catch(() => '');
+      const reason = `Embedding API error ${resp.status}: ${bodyText.slice(0, 200) || resp.statusText}`;
+      console.warn('Embedding failed:', resp.status, bodyText);
+      showToast(reason);
       return null;
     }
     const data = await resp.json();
     return data.data?.[0]?.embedding || null;
   } catch (e) {
+    const reason = `Embedding network error: ${e.message || e}`;
     console.warn('Embedding error:', e);
+    showToast(reason);
     return null;
   }
 }
@@ -1339,10 +1348,14 @@ async function embedAndStoreCard(card) {
   for (const [dim, prefix] of Object.entries(prefixes)) {
     const vec = await embedText(prefix + body);
     if (!vec) {
-      console.warn(`Embedding failed for dimension ${dim} on card ${card.id}`);
+      const reason = `Embedding failed for dimension ${dim} on card "${card.name || card.id}"`;
+      console.warn(reason);
+      showToast(reason);
       return false;
     }
-    embeddings[`embedding_${dim}`] = vec;
+    // pgvector requires the vector as a string in '[n,n,n]' format, not a raw JS array.
+    // Passing a raw array results in a silent null write to the column.
+    embeddings[`embedding_${dim}`] = '[' + vec.join(',') + ']';
   }
 
   try {
@@ -1354,12 +1367,16 @@ async function embedAndStoreCard(card) {
       updated_at: new Date().toISOString()
     }, { onConflict: 'user_id,card_id' });
     if (error) {
+      const reason = `Embedding save failed: ${error.message || error.code || 'unknown error'}`;
       console.warn('Embedding upsert failed:', error);
+      showToast(reason);
       return false;
     }
     return true;
   } catch (e) {
+    const reason = `Embedding save error: ${e.message || e}`;
     console.warn('Embedding store error:', e);
+    showToast(reason);
     return false;
   }
 }
@@ -1375,44 +1392,43 @@ async function embedAndStoreCard(card) {
 //   'fragment'      → already-structured fragment with a heading (MD-style)
 //   'note'          → freeform text the user wrote themselves (manual create)
 async function extractMemoryCards(rawInput, inputType = 'conversation') {
-  if (!state.apiKey || !rawInput || !rawInput.trim()) return [];
+  if (!state.apiKey) throw new Error('No API key set');
+  if (!rawInput || !rawInput.trim()) return [];
   const aiName = state.aiLabel || 'Kai';
   const userName = state.userLabel || 'the user';
-  const soulPrompt = state.systemPrompt || '';
 
-  const characterBlock = soulPrompt ? `Below is the system prompt that defines the character ${aiName}. Read it so you understand who he is and his relationship with ${userName}.
-
----CHARACTER DEFINITION START---
-${soulPrompt}
----CHARACTER DEFINITION END---
-
-` : '';
-
+  // Minimal framing only — names so the model references them correctly.
+  // The full system prompt is intentionally NOT included here: it makes the
+  // model perform in character instead of extracting, and the extra tokens
+  // can starve the response and truncate the JSON mid-string.
   const sourceFraming = {
     conversation: `The following is a conversation between ${userName} and ${aiName}. Extract ONE memory card capturing what happened.`,
     log: `The following is a longer conversation log between ${userName} and ${aiName}. Extract one card per distinct moment worth remembering. Do not force structure — generate as many cards as there are real moments. If the log contains one moment, generate one card. If it contains many, generate many.`,
-    fragment: `The following is a pre-written memory fragment. Restructure it into the Title + Context format below. Preserve the substance — do not invent details, do not omit emotional or relational texture that's already there.`,
-    note: `The following is a note ${userName} wrote about something to remember. Format it into the Title + Context structure below. Preserve her voice and intent.`
+    fragment: `The following is a pre-written memory fragment. Restructure it into the card format below. Preserve the substance — do not invent details, do not omit emotional or relational texture that's already there.`,
+    note: `The following is a note ${userName} wrote about something to remember. Format it into the card structure below. Preserve their voice and intent.`,
+    thread: `The following is the running summary of a topic from a conversation between ${userName} and ${aiName}. Extract ONE memory card capturing the portable content — facts, decisions, preferences, relational moments, or realizations that would matter beyond this specific situation.`
   }[inputType] || `Extract memory card(s) from the following.`;
 
-  const prompt = `${characterBlock}${sourceFraming}
+  const prompt = `${sourceFraming}
 
-CARD STRUCTURE — each card has exactly two fields:
+CARD STRUCTURE — each card has exactly three fields:
 
-TITLE — A short name for what this memory is about. 3-8 words. Concrete, not abstract.
+name — A short name for what this memory is about. 3-8 words. Concrete, not abstract.
 
-CONTEXT — A third-person narrative of what happened. 3-6 sentences. Use names (${userName}, ${aiName}). Include:
+content — A third-person narrative of what happened. 3-6 sentences. Use names (${userName}, ${aiName}). Include:
 - What was being discussed or happening
 - The concrete details that matter (things said, things made, decisions reached, specifics named)
 - The emotional and relational texture of the moment — describe it, don't interpret it
 - What shifted, was exchanged, or was created
 
+keywords — Array of 3-5 short lowercase keywords or short phrases (1-3 words each) that someone might use to bring this memory up later. Specific nouns, names, topics. Not generic words.
+
 DO NOT include directives about how to feel about the memory or what to take forward. The card describes what happened. That's all.
 
-Return ONLY a JSON array of card objects, no markdown fences, no preamble:
-[{"name": "title here", "content": "context narrative here"}]
+Return ONLY a JSON object with a "cards" array, no markdown fences, no preamble. Use these exact field names:
+{"cards": [{"name": "title here", "content": "context narrative here", "keywords": ["word", "phrase", "topic"]}]}
 
-If only one card is appropriate, return an array with one object. If the source contains multiple distinct moments, return multiple objects.
+If only one card is appropriate, the array has one object. If the source contains multiple distinct moments, the array has multiple objects.
 
 Source:
 ${rawInput}`;
@@ -1420,8 +1436,9 @@ ${rawInput}`;
   const chat = getActiveChat();
   const model = chat?.model || DEFAULT_MODELS[0].id;
 
+  let resp;
   try {
-    const resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+    resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1433,37 +1450,72 @@ ${rawInput}`;
         model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.3,
-        max_tokens: 4000
+        max_tokens: 4000,
+        response_format: { type: 'json_object' }
       })
     });
-    if (!resp.ok) {
-      console.warn('Extract HTTP error:', resp.status, await resp.text().catch(() => ''));
-      return [];
-    }
-    const data = await resp.json();
-    if (data.error) {
-      console.warn('Extract API error:', data.error);
-      return [];
-    }
-    let raw = (data.choices?.[0]?.message?.content || '').trim();
-    // Strip markdown fences if model added them
-    raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e) {
-      console.warn('Extract JSON parse failed:', e, raw.slice(0, 200));
-      return [];
-    }
-    if (!Array.isArray(parsed)) parsed = [parsed];
-    // Validate shape
-    return parsed
-      .filter(c => c && typeof c === 'object' && c.name && c.content)
-      .map(c => ({ name: String(c.name).slice(0, 200).trim(), content: String(c.content).trim() }));
   } catch (e) {
-    console.warn('Extraction failed:', e);
-    return [];
+    throw new Error(`Network error: ${e.message || e}`);
   }
+
+  if (!resp.ok) {
+    const bodyText = await resp.text().catch(() => '');
+    throw new Error(`API error ${resp.status}: ${bodyText.slice(0, 200) || resp.statusText}`);
+  }
+
+  const data = await resp.json();
+  if (data.error) {
+    throw new Error(`API returned error: ${data.error.message || JSON.stringify(data.error)}`);
+  }
+
+  let raw = (data.choices?.[0]?.message?.content || '').trim();
+  if (!raw) throw new Error('Model returned empty response');
+  // Strip markdown fences if model added them despite json_object mode
+  raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    throw new Error(`JSON parse failed: ${e.message}. Response started with: ${raw.slice(0, 100)}`);
+  }
+
+  // Accept both {cards: [...]} (the new shape we ask for) and a bare array
+  // (which some models return regardless of the prompt).
+  let cardArray;
+  if (Array.isArray(parsed)) {
+    cardArray = parsed;
+  } else if (parsed && Array.isArray(parsed.cards)) {
+    cardArray = parsed.cards;
+  } else if (parsed && typeof parsed === 'object' && (parsed.name || parsed.title) && parsed.content) {
+    cardArray = [parsed];
+  } else {
+    throw new Error('Response did not contain a recognizable card array');
+  }
+
+  // Validate and normalize each card. Defensively accept `title` as a synonym
+  // for `name` since older prompts trained models to use that key.
+  const validated = cardArray
+    .filter(c => c && typeof c === 'object' && (c.name || c.title) && c.content)
+    .map(c => {
+      const card = {
+        name: String(c.name || c.title).slice(0, 200).trim(),
+        content: String(c.content).trim()
+      };
+      if (Array.isArray(c.keywords)) {
+        card.keywords = c.keywords
+          .filter(k => typeof k === 'string' && k.trim())
+          .map(k => k.toLowerCase().trim().slice(0, 50))
+          .slice(0, 8);
+      }
+      return card;
+    });
+
+  if (validated.length === 0) {
+    throw new Error('No valid cards in response (missing required name/content fields)');
+  }
+
+  return validated;
 }
 
 // LEGACY — kept as a no-op stub so old callers in case any code references it.
@@ -1524,10 +1576,13 @@ async function getRelevantMemoriesBySemantics(msg) {
   for (const [dim, prefix] of Object.entries(prefixes)) {
     const vec = await embedText(prefix + msg);
     if (!vec) {
-      console.warn(`Query embedding failed for dimension ${dim}`);
+      const reason = `Query embedding failed for dimension ${dim}`;
+      console.warn(reason);
+      showToast(reason);
       return null;
     }
-    queryEmbeddings[`query_${dim}`] = vec;
+    // pgvector requires the vector as a string in '[n,n,n]' format, not a raw JS array.
+    queryEmbeddings[`query_${dim}`] = '[' + vec.join(',') + ']';
   }
 
   try {
@@ -2359,7 +2414,13 @@ async function maybeAutoCapture(chat) {
     return `${role}: ${text}`;
   }).join('\n\n');
 
-  const cards = await extractMemoryCards(transcript, 'conversation');
+  let cards;
+  try {
+    cards = await extractMemoryCards(transcript, 'conversation');
+  } catch (e) {
+    console.warn('Auto-capture extraction failed:', e);
+    return;
+  }
   if (!cards.length) return;
 
   // Mark the chat so we don't capture this window again
@@ -2371,6 +2432,7 @@ async function maybeAutoCapture(chat) {
       id: 'mem_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
       name: c.name.slice(0, 200),
       content: c.content,
+      keywords: c.keywords || [],
       enabled: true,
       pinned: false,
       capturedAt: Date.now(),
@@ -2415,7 +2477,7 @@ async function captureMemoryFromMessage(idx, btn) {
 
     const cards = await extractMemoryCards(transcript, 'conversation');
     if (!cards.length) {
-      showToast('Could not extract a card from that moment');
+      showToast('Extractor returned no cards');
       return;
     }
     // Capture-from-message produces one card. Take the first.
@@ -2424,6 +2486,7 @@ async function captureMemoryFromMessage(idx, btn) {
     pendingMemoryDraft = {
       name: card.name,
       content: card.content,
+      keywords: card.keywords || [],
       enabled: true,
       pinned: false,
     };
@@ -2432,7 +2495,7 @@ async function captureMemoryFromMessage(idx, btn) {
 
   } catch (e) {
     console.error('Capture error:', e);
-    showToast('Could not capture memory');
+    showToast(`Capture failed: ${e.message || e}`);
   } finally {
     btn.textContent = origLabel;
     btn.disabled = false;
@@ -2737,7 +2800,10 @@ async function migrateExistingCards() {
   if (!confirm(`Re-extract and re-embed ${state.memories.length} card${state.memories.length === 1 ? '' : 's'}? This will rewrite the content of every card and call the model for each. Existing pin/enabled settings stay.`)) return;
 
   const total = state.memories.length;
-  let migrated = 0, failed = 0;
+  let textRewritten = 0;
+  let embedded = 0;
+  let textFailed = 0;
+  let embedFailed = 0;
 
   for (const card of state.memories) {
     try {
@@ -2748,28 +2814,41 @@ async function migrateExistingCards() {
         const fresh = cards[0]; // fragment input always yields one card
         card.name = fresh.name;
         card.content = fresh.content;
+        // Preserve keywords if the new extractor produced them (used by keyword fallback)
+        if (fresh.keywords && Array.isArray(fresh.keywords)) {
+          card.keywords = fresh.keywords;
+        }
         card.updatedAt = Date.now();
         // Strip legacy fields so they don't drift back in
         delete card.summary;
-        delete card.keywords;
         delete card.priority;
-        // Re-embed
-        await embedAndStoreCard(card);
-        migrated++;
+        textRewritten++;
+        // Re-embed and track that result independently
+        const embedResult = await embedAndStoreCard(card);
+        if (embedResult === true) {
+          embedded++;
+        } else {
+          embedFailed++;
+        }
       } else {
-        failed++;
+        textFailed++;
       }
     } catch (e) {
       console.warn('Migration failed for card', card.id, e);
-      failed++;
+      textFailed++;
     }
-    if ((migrated + failed) % 3 === 0) {
-      showToast(`Migrating… ${migrated + failed}/${total}`, false);
+    const done = textRewritten + textFailed;
+    if (done % 3 === 0) {
+      showToast(`Migrating… ${done}/${total}`, false);
     }
   }
   saveState();
   renderMemoryCards();
-  showToast(`Migrated ${migrated} card${migrated === 1 ? '' : 's'}${failed ? ` · ${failed} failed` : ''}`, false);
+  const parts = [`Rewrote ${textRewritten}/${total}`];
+  if (textFailed) parts.push(`${textFailed} rewrite failed`);
+  parts.push(`embedded ${embedded}/${textRewritten}`);
+  if (embedFailed) parts.push(`${embedFailed} embed failed`);
+  showToast(parts.join(' · '), false);
 }
 
 function setSlider(sid, vid, val, isInt) {
@@ -3159,10 +3238,19 @@ async function processMemoryFragmentImport(text) {
       return false;
     }
     showToast(`Extracting ${fragments.length} fragment${fragments.length === 1 ? '' : 's'}…`, false);
+    let extractFailed = 0;
     for (const f of fragments) {
       const source = `## ${f.title}\n\n${f.content}`;
-      const extracted = await extractMemoryCards(source, 'fragment');
-      cards.push(...extracted);
+      try {
+        const extracted = await extractMemoryCards(source, 'fragment');
+        cards.push(...extracted);
+      } catch (e) {
+        console.warn('Fragment extraction failed:', f.title, e);
+        extractFailed++;
+      }
+    }
+    if (extractFailed > 0) {
+      showToast(`${extractFailed} fragment${extractFailed === 1 ? '' : 's'} failed to extract`);
     }
   } else {
     // Raw conversation log or freeform — let the extractor find the moments
@@ -3170,7 +3258,12 @@ async function processMemoryFragmentImport(text) {
       return false;
     }
     showToast('Extracting cards from log…', false);
-    cards = await extractMemoryCards(text, 'log');
+    try {
+      cards = await extractMemoryCards(text, 'log');
+    } catch (e) {
+      showToast(`Log extraction failed: ${e.message || e}`);
+      return false;
+    }
   }
 
   if (!cards.length) {
@@ -3184,6 +3277,7 @@ async function processMemoryFragmentImport(text) {
       id: 'mem_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
       name: c.name.slice(0, 200),
       content: c.content,
+      keywords: c.keywords || [],
       enabled: true,
       pinned: false,
       capturedAt: Date.now(),
