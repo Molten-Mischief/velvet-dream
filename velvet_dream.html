@@ -1955,7 +1955,8 @@ async function summarizeOlderMessages(chat) {
 // ===== BUILD API MESSAGES =====
 async function buildApiMessages(chat, userContent) {
   const messages = [];
-  messages.push({ role: 'system', content: state.systemPrompt || 'You are a helpful assistant.' });
+  const ci = state.systemPrompt || 'You are a helpful assistant.';
+  messages.push({ role: 'system', content: `[INSTRUCTIONS]\n\n${ci}` });
   if (chat.summary) {
     messages.push({ role: 'system', content: `[PREVIOUS SUMMARY]\n\n${chat.summary}` });
   }
@@ -1981,8 +1982,31 @@ async function buildApiMessages(chat, userContent) {
   const mems = await getRelevantMemories(userText);
   updateInfoBar(mems, null, chat.threads);
   if (mems.length > 0) {
-    const block = mems.map(m => `## ${m.name}\n${m.content}`).join('\n\n---\n\n');
-    messages.push({ role: 'system', content: `[RELEVANT MEMORIES]\n\n${block}` });
+    const userName = state.userLabel || 'the user';
+    const aiName = state.aiLabel || 'Kai';
+    const relativeTime = (ts) => {
+      if (!ts) return '';
+      const diff = Date.now() - ts;
+      const min = Math.floor(diff / 60000);
+      if (min < 1) return 'just now';
+      if (min < 60) return `${min} minute${min === 1 ? '' : 's'} ago`;
+      const hr = Math.floor(min / 60);
+      if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
+      const day = Math.floor(hr / 24);
+      if (day < 30) return `${day} day${day === 1 ? '' : 's'} ago`;
+      const mo = Math.floor(day / 30);
+      if (mo < 12) return `${mo} month${mo === 1 ? '' : 's'} ago`;
+      const yr = Math.floor(mo / 12);
+      return `${yr} year${yr === 1 ? '' : 's'} ago`;
+    };
+    const block = mems.map(m => {
+      const ts = m.updatedAt || m.capturedAt || m.createdAt;
+      const when = relativeTime(ts);
+      const header = when ? `## ${m.name} (${when})` : `## ${m.name}`;
+      return `${header}\n${m.content}`;
+    }).join('\n\n---\n\n');
+    const framing = `These are notes from past conversations between ${userName} and ${aiName} that may be relevant to the current message. The timestamp on each is when it was last captured or updated.`;
+    messages.push({ role: 'system', content: `[RELEVANT MEMORIES]\n\n${framing}\n\n${block}` });
   }
   const ctx = state.contextMessages || 10;
   chat.messages.slice(-ctx).forEach(m => messages.push({ role: m.role, content: m.content }));
@@ -2092,6 +2116,10 @@ async function sendMessage() {
     // is mentioned gets its summary into context this turn. The slow half
     // (semantic scan) runs inside updateSessionThreads below for oblique cases.
     reactivateThreadsByWordMatch(chat, text);
+
+    // Per-turn archive check — runs every send (not just on updater cadence)
+    // so threads archive on schedule even if the LLM updater isn't due to run.
+    archiveStaleThreads(chat);
 
     await summarizeOlderMessages(chat);
     const apiMsgs = await buildApiMessages(chat, userContent);
@@ -2375,10 +2403,17 @@ function editMessage(idx) {
   const msg = chat.messages[idx];
   const text = typeof msg.content === 'string' ? msg.content : msg.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
   chat.messages = chat.messages.slice(0, idx);
+  // Threads were derived from messages that no longer exist. Clear them so the
+  // next updater pass rebuilds from the (now-corrected) conversation. The
+  // lastThreadUpdateAt counter also resets so the updater fires on the next send
+  // instead of waiting for window-cadence.
+  chat.threads = [];
+  chat.lastThreadUpdateAt = undefined;
   chat.updatedAt = Date.now();
   saveState();
   renderMessages();
   renderChatList();
+  updateInfoBar([], null, chat.threads);
   const input = document.getElementById('inputField');
   input.value = text;
   autoResize(input);
@@ -2488,6 +2523,33 @@ async function testVoice() {
 // Holds the unsaved draft from a capture. Cleared on close-without-save.
 let pendingMemoryDraft = null;
 
+// PER-TURN ARCHIVE CHECK: deterministic, no LLM call.
+// Runs on every send so threads archive on schedule (3 turns of disuse),
+// independent of the LLM-based updater cadence (which runs every N turns
+// where N = window size).
+// A thread archives if it hasn't been touched in 3+ turns. The "referenced
+// in recent transcript" check happens via the word-match reactivation pass
+// that runs synchronously before each send — so a thread that's been
+// referenced gets its lastTouchedTurn bumped before this check runs.
+function archiveStaleThreads(chat) {
+  if (!chat || !chat.threads || !chat.threads.length) return;
+  const ARCHIVE_AFTER_TURNS = 3;
+  const turnCount = chat.messages ? chat.messages.length : 0;
+  let changed = false;
+  for (const t of chat.threads) {
+    if (t.archived) continue;
+    const turnsSinceTouch = turnCount - (t.lastTouchedTurn || turnCount);
+    if (turnsSinceTouch >= ARCHIVE_AFTER_TURNS) {
+      t.archived = true;
+      changed = true;
+    }
+  }
+  if (changed) {
+    saveState();
+    updateInfoBar([], null, chat.threads);
+  }
+}
+
 // SYNCHRONOUS REACTIVATION: cheap word-match check that runs BEFORE the main
 // response is generated. If the user just mentioned a word from an archived
 // thread's name (3+ chars), reactivate that thread immediately so its summary
@@ -2535,7 +2597,7 @@ function reactivateThreadsByWordMatch(chat, userText) {
 //
 // Each thread now has:
 //   id, name, summary (prose), lastTouchedTurn, archived (bool),
-//   updatesSincePromotion (counter for portability check)
+//   lastPromotedAtTurn (turn count of last promotion, 0 if never)
 async function updateSessionThreads(chat) {
   if (!chat || !state.apiKey) return;
   if (!chat.messages || chat.messages.length < 2) return;
@@ -2650,9 +2712,7 @@ If nothing has changed, return the existing list unchanged.`;
         summary: newSummary,
         lastTouchedTurn: summaryChanged ? turnCount : (prev?.lastTouchedTurn ?? turnCount),
         archived: false,
-        updatesSincePromotion: summaryChanged
-          ? ((prev?.updatesSincePromotion ?? 0) + 1)
-          : (prev?.updatesSincePromotion ?? 0)
+        lastPromotedAtTurn: prev?.lastPromotedAtTurn ?? 0
       };
     });
 
@@ -2660,22 +2720,9 @@ If nothing has changed, return the existing list unchanged.`;
   // sees archived threads, so they pass through untouched).
   const archived = (chat.threads || []).filter(t => t.archived);
 
-  // ARCHIVE PASS: any active thread untouched + unreferenced in 3+ turns archives.
-  // "Referenced" = the thread's name (or any meaningful word from the name) appears
-  // in the transcript even if the updater didn't add to its summary.
-  const ARCHIVE_AFTER_TURNS = 3;
+  // NOTE: archive check is now done per-turn in archiveStaleThreads(), not here.
+  // This function only handles content updates, reactivation, and promotion.
   const transcriptLower = transcript.toLowerCase();
-  for (const t of updatedActive) {
-    const turnsSinceTouch = turnCount - (t.lastTouchedTurn || turnCount);
-    if (turnsSinceTouch < ARCHIVE_AFTER_TURNS) continue;
-    // Check for reference: any word from the thread name (3+ chars) appearing
-    // in the recent transcript.
-    const nameWords = (t.name || '').toLowerCase().split(/\W+/).filter(w => w.length >= 3);
-    const referenced = nameWords.some(w => transcriptLower.includes(w));
-    if (!referenced) {
-      t.archived = true;
-    }
-  }
 
   // REACTIVATION PASS: any archived thread whose name appears in the recent
   // transcript wakes back up (un-archives, resets touch turn).
@@ -2743,23 +2790,19 @@ Return ONLY a JSON object listing the IDs of any archived threads that were brou
     }
   }
 
-  // PORTABILITY PROMOTION: for any active thread whose updatesSincePromotion
-  // hits the threshold, run a portability check. If portable content exists,
-  // promote to a memory card. Reset the counter regardless of outcome.
-  // Also: any thread archiving on this pass gets a promotion check.
-  const PROMOTE_AFTER_UPDATES = 35;
+  // PORTABILITY PROMOTION: every active thread that's been touched since its
+  // last promotion gets a promotion pass. The re-promotion logic in
+  // promoteThreadIfPortable merges with the existing card (no duplicates).
+  // Threads with no new content since last promotion are skipped to avoid
+  // redundant LLM calls.
   const promotionCandidates = [];
   for (const t of updatedActive) {
-    if (t.updatesSincePromotion >= PROMOTE_AFTER_UPDATES) {
+    const lastTouched = t.lastTouchedTurn || 0;
+    const lastPromoted = t.lastPromotedAtTurn || 0;
+    if (lastTouched > lastPromoted) {
       promotionCandidates.push(t);
-      t.updatesSincePromotion = 0;  // reset counter regardless of outcome
-    } else if (t.archived) {
-      promotionCandidates.push(t);
+      t.lastPromotedAtTurn = turnCount;
     }
-  }
-  for (const t of archived) {
-    // Archive-trigger for threads that were archived earlier and just woke up
-    // would have been handled before they archived. Skip these.
   }
 
   // Merge active + archived for storage
