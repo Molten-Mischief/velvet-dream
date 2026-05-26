@@ -678,7 +678,6 @@ html, body {
       <div class="form-group"><label>Context Messages</label><div class="slider-row"><input type="range" id="contextSlider" min="2" max="60" step="2" value="10"><span class="slider-val" id="contextVal">10</span></div><div class="hint">How many recent messages are sent to the API.</div></div>
       <div class="form-group"><label>Max Memories Per Message</label><div class="slider-row"><input type="range" id="maxMemSlider" min="1" max="10" step="1" value="3"><span class="slider-val" id="maxMemVal">3</span></div></div>
       <div class="form-group"><label>Semantic Match Threshold</label><div class="slider-row"><input type="range" id="thresholdSlider" min="0.2" max="0.8" step="0.05" value="0.4"><span class="slider-val" id="thresholdVal">0.40</span></div><div class="hint">How similar a memory must be to your message to fire. Lower = more eager, higher = pickier. Default 0.40.</div></div>
-      <div class="form-group"><label>Auto-Capture Interval</label><div class="slider-row"><input type="range" id="autoCaptureSlider" min="0" max="20" step="2" value="8"><span class="slider-val" id="autoCaptureVal">8</span></div><div class="hint">Capture a memory card every N turns automatically. 0 = off.</div></div>
       <div class="form-group"><label>Auto-Summarize</label><div class="slider-row"><label style="min-width:130px">Summarize after</label><input type="range" id="summarizeSlider" min="0" max="40" step="2" value="0"><span class="slider-val" id="summarizeVal">OFF</span></div><div class="hint">0 = off</div></div>
       <div style="border-top:1px solid var(--border);margin:20px 0 16px;padding-top:16px">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
@@ -1417,7 +1416,7 @@ async function extractMemoryCards(rawInput, inputType = 'conversation') {
     log: `The following is a longer conversation log between ${userName} and ${aiName}. Extract one card per distinct moment worth remembering. Do not force structure — generate as many cards as there are real moments. If the log contains one moment, generate one card. If it contains many, generate many.`,
     fragment: `The following is a pre-written memory fragment. Restructure it into the card format below. Preserve the substance — do not invent details, do not omit emotional or relational texture that's already there.`,
     note: `The following is a note ${userName} wrote about something to remember. Format it into the card structure below. Preserve their voice and intent.`,
-    thread: `The following is the running summary of a topic from a conversation between ${userName} and ${aiName}. Extract ONE memory card capturing the portable content — facts, decisions, preferences, relational moments, or realizations that would matter beyond this specific situation.`
+    thread: `The following is the running summary of a topic from a conversation between ${userName} and ${aiName}. Extract ONE memory card capturing the portable content — facts, decisions, plans, commitments, preferences, relational moments, or realizations. Concrete plans and decisions are as important to capture as emotional or relational content; do not filter them out as logistical or insignificant.`
   }[inputType] || `Extract memory card(s) from the following.`;
 
   const prompt = `${sourceFraming}
@@ -1429,6 +1428,7 @@ name — A short name for what this memory is about. 3-8 words. Concrete, not ab
 content — A third-person narrative of what happened. 3-6 sentences. Use names (${userName}, ${aiName}). Include:
 - What was being discussed or happening
 - The concrete details that matter (things said, things made, decisions reached, specifics named)
+- Any plans, commitments, or decisions about future actions
 - The emotional and relational texture of the moment — describe it, don't interpret it
 - What shifted, was exchanged, or was created
 
@@ -1528,6 +1528,187 @@ ${rawInput}`;
 
   return validated;
 }
+
+// Consolidator: when extractMemoryCards returns 2+ cards, check whether any of
+// them name the same domain and merge those into one card. Mirrors the thread
+// merge rule from the updater. Returns the (possibly shorter) array.
+//
+// Skipped for single-card outputs — no merging needed.
+async function consolidateCards(cards) {
+  if (!cards || cards.length < 2) return cards;
+  if (!state.apiKey) return cards;
+
+  const prompt = `You are reviewing a set of memory cards that were just extracted from one source. Some of them may refer to the same domain of activity and should be merged into a single card.
+
+Domain rule: two cards name the same domain when they refer to the same specific activity, project, person, decision, or situation. Registers, moods, and qualities of engagement are not domains — those are texture that belongs inside a card, not a basis for merging or separating. Different events in the same domain (e.g. two separate vet visits) are different domains and should NOT be merged.
+
+CARDS:
+${JSON.stringify(cards, null, 2)}
+
+For each group of cards that name the same domain, merge them into one card:
+- Combine the content into a single coherent narrative
+- Pick the more accurate name (or write a better one that covers the merged content)
+- Union the keywords, deduplicated, keep 3-8 total
+- Preserve all concrete details, plans, decisions, and relational texture from the source cards — do not drop content
+
+Cards that do not share a domain with any other card stay as they are.
+
+Return ONLY a JSON object with a "cards" array, no markdown fences, no preamble:
+{"cards": [{"name": "...", "content": "...", "keywords": ["..."]}]}
+
+If no merging is needed, return the cards unchanged.`;
+
+  const chat = getActiveChat();
+  const model = chat?.model || DEFAULT_MODELS[0].id;
+
+  let resp;
+  try {
+    resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${state.apiKey}`,
+        'HTTP-Referer': 'https://kai.app',
+        'X-Title': 'Kai Card Consolidate'
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_tokens: 4000,
+        response_format: { type: 'json_object' }
+      })
+    });
+  } catch (e) {
+    console.warn('Consolidator network error:', e);
+    return cards;
+  }
+  if (!resp.ok) {
+    console.warn('Consolidator HTTP error:', resp.status);
+    return cards;
+  }
+  const data = await resp.json();
+  let raw = (data.choices?.[0]?.message?.content || '').trim();
+  raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.warn('Consolidator JSON parse failed:', e);
+    return cards;
+  }
+
+  let cardArray;
+  if (Array.isArray(parsed)) cardArray = parsed;
+  else if (parsed && Array.isArray(parsed.cards)) cardArray = parsed.cards;
+  else return cards;
+
+  const validated = cardArray
+    .filter(c => c && typeof c === 'object' && (c.name || c.title) && c.content)
+    .map(c => {
+      const card = {
+        name: String(c.name || c.title).slice(0, 200).trim(),
+        content: String(c.content).trim()
+      };
+      if (Array.isArray(c.keywords)) {
+        card.keywords = c.keywords
+          .filter(k => typeof k === 'string' && k.trim())
+          .map(k => k.toLowerCase().trim().slice(0, 50))
+          .slice(0, 8);
+      }
+      return card;
+    });
+
+  if (validated.length === 0) return cards;
+  return validated;
+}
+
+// Tag classifier: assigns invisible tags to each card based on content.
+// 'plan' = the card describes future action, intention, or commitment.
+// 'decision' = the card describes a choice made that affects future behavior.
+// Multiple tags allowed. Empty array means neither applies (general memory).
+async function classifyCardTags(cards) {
+  if (!cards || !cards.length) return cards;
+  if (!state.apiKey) return cards;
+
+  const prompt = `For each memory card below, classify whether it describes a plan or a decision. These are invisible tags used to surface time-sensitive cards in the UI.
+
+plan = the card describes a future action, intention, or commitment (something to be done, someone to be contacted, an event upcoming)
+decision = the card describes a choice that was made affecting future behavior (a preference settled, an approach chosen, a course agreed on)
+
+A card can have both tags, one tag, or neither. Cards describing past events with no forward-looking element get an empty tag list.
+
+CARDS:
+${JSON.stringify(cards.map((c, i) => ({ index: i, name: c.name, content: c.content })), null, 2)}
+
+Return ONLY a JSON object with a "tags" array, one entry per card in order:
+{"tags": [["plan"], ["decision"], ["plan", "decision"], []]}
+
+The length of the tags array must match the number of cards.`;
+
+  const chat = getActiveChat();
+  const model = chat?.model || DEFAULT_MODELS[0].id;
+
+  let resp;
+  try {
+    resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${state.apiKey}`,
+        'HTTP-Referer': 'https://kai.app',
+        'X-Title': 'Kai Card Classify'
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        max_tokens: 1000,
+        response_format: { type: 'json_object' }
+      })
+    });
+  } catch (e) {
+    console.warn('Classifier network error:', e);
+    return cards;
+  }
+  if (!resp.ok) {
+    console.warn('Classifier HTTP error:', resp.status);
+    return cards;
+  }
+  const data = await resp.json();
+  let raw = (data.choices?.[0]?.message?.content || '').trim();
+  raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.warn('Classifier JSON parse failed:', e);
+    return cards;
+  }
+
+  const tagsArray = Array.isArray(parsed) ? parsed : (parsed && Array.isArray(parsed.tags) ? parsed.tags : null);
+  if (!tagsArray || tagsArray.length !== cards.length) return cards;
+
+  return cards.map((c, i) => {
+    const t = Array.isArray(tagsArray[i]) ? tagsArray[i].filter(x => x === 'plan' || x === 'decision') : [];
+    return { ...c, tags: t };
+  });
+}
+
+// Convenience wrapper: extract → consolidate (if 2+) → classify → return.
+// Use this instead of calling extractMemoryCards directly when you want the
+// full pipeline applied (which is most of the time now).
+async function extractAndProcessCards(rawInput, inputType = 'conversation') {
+  let cards = await extractMemoryCards(rawInput, inputType);
+  if (cards.length >= 2) {
+    cards = await consolidateCards(cards);
+  }
+  if (cards.length) {
+    cards = await classifyCardTags(cards);
+  }
+  return cards;
+}
+
 
 // LEGACY — kept as a no-op stub so old callers in case any code references it.
 // New code should call extractMemoryCards directly.
@@ -1906,6 +2087,12 @@ async function sendMessage() {
   let streamTickerId = null; // hoisted so finally can clear it on abort/error
 
   try {
+    // Hybrid reactivation — fast half: word-match against the current user
+    // message before we build the prompt, so any archived thread whose name
+    // is mentioned gets its summary into context this turn. The slow half
+    // (semantic scan) runs inside updateSessionThreads below for oblique cases.
+    reactivateThreadsByWordMatch(chat, text);
+
     await summarizeOlderMessages(chat);
     const apiMsgs = await buildApiMessages(chat, userContent);
 
@@ -2301,6 +2488,39 @@ async function testVoice() {
 // Holds the unsaved draft from a capture. Cleared on close-without-save.
 let pendingMemoryDraft = null;
 
+// SYNCHRONOUS REACTIVATION: cheap word-match check that runs BEFORE the main
+// response is generated. If the user just mentioned a word from an archived
+// thread's name (3+ chars), reactivate that thread immediately so its summary
+// gets injected into the prompt this turn.
+//
+// This is the fast half of the hybrid reactivation system. The slow half is
+// the semantic scan inside updateSessionThreads, which catches oblique
+// references that word-match misses (one turn later).
+//
+// Returns true if any thread was reactivated (caller can choose to log/render).
+function reactivateThreadsByWordMatch(chat, userText) {
+  if (!chat || !chat.threads || !userText) return false;
+  const text = String(userText).toLowerCase();
+  if (!text.trim()) return false;
+  let reactivated = false;
+  const turnCount = chat.messages ? chat.messages.length : 0;
+  for (const t of chat.threads) {
+    if (!t.archived) continue;
+    const nameWords = (t.name || '').toLowerCase().split(/\W+/).filter(w => w.length >= 3);
+    const referenced = nameWords.some(w => text.includes(w));
+    if (referenced) {
+      t.archived = false;
+      t.lastTouchedTurn = turnCount;
+      reactivated = true;
+    }
+  }
+  if (reactivated) {
+    saveState();
+    updateInfoBar([], null, chat.threads);
+  }
+  return reactivated;
+}
+
 // SESSION STATE — thread inference
 // After each assistant response, Kai (well, the model) silently looks at the recent
 // window and the existing threads. It returns updated threads in JSON form.
@@ -2356,16 +2576,15 @@ ${JSON.stringify(existing, null, 2)}
 RECENT CONVERSATION:
 ${transcript}
 
-For each thread, the summary records what was said, what happened, and the details. Names, numbers, decisions, specifics — whatever came up in conversation about that topic. Not interpretation. Not feelings about it. Just the record.
+For each thread, the summary records what was said, what happened, what was decided or planned, and the details. Names, numbers, decisions, plans, specifics — whatever came up in conversation about that topic, including commitments and intentions for the future. Not interpretation. Not feelings about it. Just the record.
 
 Update the thread list:
 1. If recent conversation touches an existing thread, integrate the new information into its summary. Build on what's already there.
-2. Prefer folding new content into existing threads. Only open a new thread if the topic is genuinely separate from all existing threads.
-3. After updating, check the full list: if any two threads are now actually about the same thing (e.g. nectarine snack + flan dessert turned out to be the same dish), merge them — combine their summaries, pick the more accurate name, keep one ID and drop the other.
-4. Do not close existing threads. Just leave older ones unchanged if they aren't touched here.
+2. Each thread's subject should name a domain of activity. Registers, moods, and qualities of engagement are not subjects — they belong inside the summary as texture. If two threads name the same domain, merge them: combine the summaries, keep the more accurate name, drop the other ID.
+3. Do not close existing threads. Just leave older ones unchanged if they aren't touched here.
 
 Return ONLY a JSON object with a "threads" array, no preamble, no markdown:
-{"threads": [{"id": "preserve existing IDs, generate new ones as thread_<short>", "name": "short name 2-5 words", "summary": "prose record of what was said and happened"}]}
+{"threads": [{"id": "preserve existing IDs, generate new ones as thread_<short>", "name": "short name 2-5 words", "summary": "prose record of what was said, what happened, and what was decided or planned"}]}
 
 If nothing has changed, return the existing list unchanged.`;
 
@@ -2441,10 +2660,10 @@ If nothing has changed, return the existing list unchanged.`;
   // sees archived threads, so they pass through untouched).
   const archived = (chat.threads || []).filter(t => t.archived);
 
-  // ARCHIVE PASS: any active thread untouched + unreferenced in 20+ turns archives.
+  // ARCHIVE PASS: any active thread untouched + unreferenced in 3+ turns archives.
   // "Referenced" = the thread's name (or any meaningful word from the name) appears
   // in the transcript even if the updater didn't add to its summary.
-  const ARCHIVE_AFTER_TURNS = 20;
+  const ARCHIVE_AFTER_TURNS = 3;
   const transcriptLower = transcript.toLowerCase();
   for (const t of updatedActive) {
     const turnsSinceTouch = turnCount - (t.lastTouchedTurn || turnCount);
@@ -2466,6 +2685,61 @@ If nothing has changed, return the existing list unchanged.`;
     if (referenced) {
       t.archived = false;
       t.lastTouchedTurn = turnCount;
+    }
+  }
+
+  // SEMANTIC REACTIVATION PASS: word-match misses oblique references like
+  // "the recipe from earlier" or "should I call her again?" — these don't
+  // share words with the archived thread name. Ask the model whether the
+  // recent transcript brought any still-archived threads back up.
+  // Skipped when there are no archived threads left to check.
+  const stillArchived = archived.filter(t => t.archived);
+  if (stillArchived.length > 0) {
+    try {
+      const archivedList = stillArchived.map(t => ({ id: t.id, name: t.name, summary: (t.summary || '').slice(0, 300) }));
+      const semanticPrompt = `You are checking whether a recent conversation has brought any archived topics back up. Archived topics are previous threads of conversation that fell quiet but might be referenced again — sometimes by name, sometimes obliquely ("the recipe from earlier", "should I call her again?", "back to what we were doing").
+
+ARCHIVED THREADS:
+${JSON.stringify(archivedList, null, 2)}
+
+RECENT CONVERSATION:
+${transcript}
+
+Return ONLY a JSON object listing the IDs of any archived threads that were brought up (directly or obliquely) in the recent conversation. If none, return an empty array.
+
+{"reactivate": ["thread_id1", "thread_id2"]}`;
+
+      const semResp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${state.apiKey}`,
+          'HTTP-Referer': 'https://kai.app',
+          'X-Title': 'Kai Semantic Reactivation'
+        },
+        body: JSON.stringify({
+          model: chat.model || DEFAULT_MODELS[0].id,
+          messages: [{ role: 'user', content: semanticPrompt }],
+          temperature: 0.1,
+          max_tokens: 500,
+          response_format: { type: 'json_object' }
+        })
+      });
+      if (semResp.ok) {
+        const semData = await semResp.json();
+        let semRaw = (semData.choices?.[0]?.message?.content || '').trim();
+        semRaw = semRaw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+        const semParsed = JSON.parse(semRaw);
+        const ids = Array.isArray(semParsed?.reactivate) ? semParsed.reactivate : (Array.isArray(semParsed) ? semParsed : []);
+        for (const t of stillArchived) {
+          if (ids.includes(t.id)) {
+            t.archived = false;
+            t.lastTouchedTurn = turnCount;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('Semantic reactivation failed:', e);
     }
   }
 
@@ -2502,37 +2776,79 @@ If nothing has changed, return the existing list unchanged.`;
 
 // Portability promotion: checks whether a thread contains content worth saving
 // as a long-term memory card. Replaces the every-N-turn auto-capture system.
-// Calls extractMemoryCards with inputType 'thread'. The extractor's prompt
+// Calls extractAndProcessCards with inputType 'thread'. The extractor's prompt
 // for 'thread' already asks specifically for portable content only.
+// If a card from this same thread already exists (re-promotion case), the new
+// extraction is merged with the existing card via the consolidator so we don't
+// accumulate duplicates.
 async function promoteThreadIfPortable(thread, chat) {
   if (!thread || !thread.summary || !thread.summary.trim()) return;
   if (!state.apiKey) return;
   const source = `Thread: ${thread.name}\n\n${thread.summary}`;
   let cards;
   try {
-    cards = await extractMemoryCards(source, 'thread');
+    cards = await extractAndProcessCards(source, 'thread');
   } catch (e) {
     console.warn('Thread promotion extraction failed:', e);
     return;
   }
   if (!cards.length) return;
-  for (const c of cards) {
-    const card = {
-      id: 'mem_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
-      name: c.name.slice(0, 200),
-      content: c.content,
-      keywords: c.keywords || [],
-      enabled: true,
-      pinned: false,
-      capturedAt: Date.now(),
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      autoCapture: true,
-      sourceThread: thread.id,
-      sourceChat: chat?.id
-    };
-    state.memories.push(card);
-    embedAndStoreCard(card).catch(e => console.warn('Promotion embed failed:', e));
+
+  // Re-promotion check: is there already a card from this thread?
+  const existingIdx = state.memories.findIndex(m => m.sourceThread === thread.id);
+
+  if (existingIdx >= 0) {
+    // Merge new extraction with existing card via consolidator.
+    const existing = state.memories[existingIdx];
+    const newCard = cards[0]; // thread input yields one card
+    const mergeInput = [
+      { name: existing.name, content: existing.content, keywords: existing.keywords || [] },
+      { name: newCard.name, content: newCard.content, keywords: newCard.keywords || [] }
+    ];
+    let merged;
+    try {
+      merged = await consolidateCards(mergeInput);
+    } catch (e) {
+      console.warn('Re-promotion merge failed, falling back to overwrite:', e);
+      merged = [newCard];
+    }
+    // Consolidator should reduce to one card (same domain — same thread source).
+    // If it didn't, take the first.
+    const finalCard = merged[0] || newCard;
+    // Re-run the classifier on the merged result so tags reflect updated content.
+    let tagged = [finalCard];
+    try {
+      tagged = await classifyCardTags([finalCard]);
+    } catch (e) {
+      console.warn('Re-promotion classify failed:', e);
+    }
+    existing.name = (tagged[0].name || finalCard.name).slice(0, 200);
+    existing.content = tagged[0].content || finalCard.content;
+    if (Array.isArray(tagged[0].keywords)) existing.keywords = tagged[0].keywords;
+    if (Array.isArray(tagged[0].tags)) existing.tags = tagged[0].tags;
+    existing.updatedAt = Date.now();
+    embedAndStoreCard(existing).catch(e => console.warn('Re-promotion embed failed:', e));
+  } else {
+    // First promotion for this thread — create new card(s).
+    for (const c of cards) {
+      const card = {
+        id: 'mem_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+        name: c.name.slice(0, 200),
+        content: c.content,
+        keywords: c.keywords || [],
+        tags: Array.isArray(c.tags) ? c.tags : [],
+        enabled: true,
+        pinned: false,
+        capturedAt: Date.now(),
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        autoCapture: true,
+        sourceThread: thread.id,
+        sourceChat: chat?.id
+      };
+      state.memories.push(card);
+      embedAndStoreCard(card).catch(e => console.warn('Promotion embed failed:', e));
+    }
   }
   saveState();
   renderMemoryCards();
@@ -2578,7 +2894,7 @@ async function captureMemoryFromMessage(idx, btn) {
       return `${role}: ${text}${marker}`;
     }).join('\n\n');
 
-    const cards = await extractMemoryCards(transcript, 'conversation');
+    const cards = await extractAndProcessCards(transcript, 'conversation');
     if (!cards.length) {
       showToast('Extractor returned no cards');
       return;
@@ -2590,6 +2906,7 @@ async function captureMemoryFromMessage(idx, btn) {
       name: card.name,
       content: card.content,
       keywords: card.keywords || [],
+      tags: Array.isArray(card.tags) ? card.tags : [],
       enabled: true,
       pinned: false,
     };
@@ -2842,12 +3159,6 @@ function openSettings() {
     tEl.value = tv;
     document.getElementById('thresholdVal').textContent = tv.toFixed(2);
   }
-  const autoEl = document.getElementById('autoCaptureSlider');
-  if (autoEl) {
-    const av = state.autoCaptureEvery ?? 8;
-    autoEl.value = av;
-    document.getElementById('autoCaptureVal').textContent = av === 0 ? 'OFF' : av;
-  }
   const sv = state.summarizeAfter || 0;
   document.getElementById('summarizeSlider').value = sv;
   document.getElementById('summarizeVal').textContent = sv === 0 ? 'OFF' : sv;
@@ -2888,8 +3199,6 @@ function saveMemorySettings() {
   state.maxMemories = parseInt(document.getElementById('maxMemSlider').value) || 3;
   state.semanticThreshold = parseFloat(document.getElementById('thresholdSlider').value) || 0.4;
   state.summarizeAfter = parseInt(document.getElementById('summarizeSlider').value) || 0;
-  const autoEl = document.getElementById('autoCaptureSlider');
-  if (autoEl) state.autoCaptureEvery = parseInt(autoEl.value) || 0;
   saveState();
   showToast('Memory settings saved', false);
 }
@@ -2974,7 +3283,6 @@ document.querySelectorAll('.slider-row input[type="range"]').forEach(s => {
     if (!v) return;
     if (s.id === 'contextSlider' || s.id === 'maxMemSlider') { v.textContent = Math.round(s.value); return; }
     if (s.id === 'summarizeSlider') { v.textContent = parseInt(s.value) === 0 ? 'OFF' : Math.round(s.value); return; }
-    if (s.id === 'autoCaptureSlider') { v.textContent = parseInt(s.value) === 0 ? 'OFF' : Math.round(s.value); return; }
     if (s.id === 'paramTopK' || s.id === 'paramMaxTok') { v.textContent = Math.round(s.value); return; }
     v.textContent = parseFloat(s.value).toFixed(2);
   });
@@ -3142,10 +3450,16 @@ function renderMemoryCards() {
     list.innerHTML = '<div class="hint" style="text-align:center;padding:20px">No memories yet.</div>';
     return;
   }
-  // Sort: pinned first, then newest captured first.
+  // Sort: pinned first, then tagged (plan/decision — active cards cluster at top),
+  // then by newest captured. Tagged cards surface above general long-term memories
+  // so time-sensitive content is easy to find.
+  const hasTag = (m) => Array.isArray(m.tags) && m.tags.length > 0;
   const sorted = [...state.memories].sort((a, b) => {
     if (a.pinned && !b.pinned) return -1;
     if (!a.pinned && b.pinned) return 1;
+    const at = hasTag(a), bt = hasTag(b);
+    if (at && !bt) return -1;
+    if (!at && bt) return 1;
     return (b.capturedAt || b.createdAt || 0) - (a.capturedAt || a.createdAt || 0);
   });
   sorted.forEach(mem => {
@@ -3345,7 +3659,7 @@ async function processMemoryFragmentImport(text) {
     for (const f of fragments) {
       const source = `## ${f.title}\n\n${f.content}`;
       try {
-        const extracted = await extractMemoryCards(source, 'fragment');
+        const extracted = await extractAndProcessCards(source, 'fragment');
         cards.push(...extracted);
       } catch (e) {
         console.warn('Fragment extraction failed:', f.title, e);
@@ -3362,7 +3676,7 @@ async function processMemoryFragmentImport(text) {
     }
     showToast('Extracting cards from log…', false);
     try {
-      cards = await extractMemoryCards(text, 'log');
+      cards = await extractAndProcessCards(text, 'log');
     } catch (e) {
       showToast(`Log extraction failed: ${e.message || e}`);
       return false;
@@ -3381,6 +3695,7 @@ async function processMemoryFragmentImport(text) {
       name: c.name.slice(0, 200),
       content: c.content,
       keywords: c.keywords || [],
+      tags: Array.isArray(c.tags) ? c.tags : [],
       enabled: true,
       pinned: false,
       capturedAt: Date.now(),
