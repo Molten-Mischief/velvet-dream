@@ -1421,6 +1421,9 @@ async function extractMemoryCards(rawInput, inputType = 'conversation') {
 
   const prompt = `${sourceFraming}
 
+Source:
+${rawInput}
+
 CARD STRUCTURE — each card has exactly three fields:
 
 name — A short name for what this memory is about. 3-8 words. Concrete, not abstract.
@@ -1439,10 +1442,7 @@ DO NOT include directives about how to feel about the memory or what to take for
 Return ONLY a JSON object with a "cards" array, no markdown fences, no preamble. Use these exact field names:
 {"cards": [{"name": "title here", "content": "context narrative here", "keywords": ["word", "phrase", "topic"]}]}
 
-If only one card is appropriate, the array has one object. If the source contains multiple distinct moments, the array has multiple objects.
-
-Source:
-${rawInput}`;
+If only one card is appropriate, the array has one object. If the source contains multiple distinct moments, the array has multiple objects.`;
 
   const chat = getActiveChat();
   const model = chat?.model || DEFAULT_MODELS[0].id;
@@ -2835,7 +2835,10 @@ async function promoteThreadIfPortable(thread, chat) {
     console.warn('Thread promotion extraction failed:', e);
     return;
   }
-  if (!cards.length) return;
+  if (!cards.length) {
+    console.warn(`Extractor returned no cards for thread "${thread.name}". Thread summary length: ${thread.summary.length} chars.`);
+    return;
+  }
 
   // Re-promotion check: is there already a card from this thread?
   const existingIdx = state.memories.findIndex(m => m.sourceThread === thread.id);
