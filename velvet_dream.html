@@ -1258,6 +1258,29 @@ function getActiveChat() {
 }
 
 // ===== MEMORY =====
+// Approximate human-readable age of a memory card, for injection into the
+// prompt so the model can weight recency. Uses updatedAt if present, else
+// createdAt. Breakpoints are intentionally coarse — the model only needs a
+// rough sense of old vs recent.
+function memoryAgeLabel(card) {
+  const ts = card.updatedAt || card.createdAt || card.capturedAt;
+  if (!ts) return 'undated';
+  const diffMs = Date.now() - ts;
+  const min = Math.floor(diffMs / 60000);
+  if (min < 1) return 'just now';
+  if (min < 60) return `${min} minute${min === 1 ? '' : 's'} ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day} day${day === 1 ? '' : 's'} ago`;
+  const wk = Math.floor(day / 7);
+  if (wk < 5) return `${wk} week${wk === 1 ? '' : 's'} ago`;
+  const mo = Math.floor(day / 30);
+  if (mo < 12) return `${mo} month${mo === 1 ? '' : 's'} ago`;
+  const yr = Math.floor(day / 365);
+  return `${yr} year${yr === 1 ? '' : 's'} ago`;
+}
+
 // Old keyword-matching retrieval. Kept as fallback when semantic search is unavailable
 // (no API key, no Supabase, or offline). Pure semantic is the primary path.
 function getRelevantMemoriesByKeyword(msg) {
@@ -1423,6 +1446,8 @@ async function extractMemoryCards(rawInput, inputType = 'conversation') {
 
 Source:
 ${rawInput}
+
+---
 
 CARD STRUCTURE — each card has exactly three fields:
 
@@ -1952,14 +1977,66 @@ async function summarizeOlderMessages(chat) {
   } catch (e) { console.error(e); }
 }
 
+// ===== FAST THREAD MAINTENANCE (no model call) =====
+// Runs on every send, inside buildApiMessages, before the prompt is assembled.
+// Two passes, both pure math/string-matching:
+//   ARCHIVE:  active threads silent for >= (windowSize/2) turns go dormant.
+//   REACTIVATE: archived threads whose keywords (or, failing that, name-words)
+//               appear in the recent transcript wake back up.
+// The slow updater (updateSessionThreads) still owns summary writing, keyword
+// generation, and the semantic reactivation fallback.
+function fastThreadMaintenance(chat, recentText) {
+  if (!chat || !chat.threads || !chat.threads.length) return;
+  const windowSize = state.contextMessages || 8;
+  const archiveAfter = Math.max(1, Math.floor(windowSize / 2));
+  const turnCount = chat.messages.length;
+  const haystack = (recentText || '').toLowerCase();
+
+  for (const t of chat.threads) {
+    if (!t.archived) {
+      // ARCHIVE PASS
+      const turnsSinceTouch = turnCount - (t.lastTouchedTurn || turnCount);
+      if (turnsSinceTouch >= archiveAfter) {
+        t.archived = true;
+      }
+    } else {
+      // REACTIVATION PASS: keywords first, then name-words.
+      const keywords = Array.isArray(t.keywords) ? t.keywords : [];
+      let matched = keywords.some(k => k && haystack.includes(String(k).toLowerCase()));
+      if (!matched) {
+        const nameWords = (t.name || '').toLowerCase().split(/\W+/).filter(w => w.length >= 3);
+        matched = nameWords.some(w => haystack.includes(w));
+      }
+      if (matched) {
+        t.archived = false;
+        t.lastTouchedTurn = turnCount;
+      }
+    }
+  }
+}
+
 // ===== BUILD API MESSAGES =====
 async function buildApiMessages(chat, userContent) {
   const messages = [];
-  const ci = state.systemPrompt || 'You are a helpful assistant.';
-  messages.push({ role: 'system', content: `[INSTRUCTIONS]\n\n${ci}` });
+  const sysContent = state.systemPrompt
+    ? `[INSTRUCTIONS]\n\n${state.systemPrompt}`
+    : 'You are a helpful assistant.';
+  messages.push({ role: 'system', content: sysContent });
   if (chat.summary) {
     messages.push({ role: 'system', content: `[PREVIOUS SUMMARY]\n\n${chat.summary}` });
   }
+
+  // FAST THREAD MAINTENANCE (#1): archive silent threads, reactivate matched
+  // ones — before we read the thread list to build the prompt. Match against
+  // the recent transcript plus the incoming user message.
+  const incomingText = typeof userContent === 'string'
+    ? userContent
+    : (userContent.find(c => c.type === 'text')?.text || '');
+  const recentForMatch = (chat.messages || [])
+    .slice(-(state.contextMessages || 8))
+    .map(m => typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.filter(b => b.type === 'text').map(b => b.text).join(' ') : ''))
+    .join(' ') + ' ' + incomingText;
+  fastThreadMaintenance(chat, recentForMatch);
 
   // Session state: inject active threads so the model knows what's currently in flight.
   // Threads are inferred and updated in the background — see updateSessionThreads().
@@ -1982,30 +2059,8 @@ async function buildApiMessages(chat, userContent) {
   const mems = await getRelevantMemories(userText);
   updateInfoBar(mems, null, chat.threads);
   if (mems.length > 0) {
-    const userName = state.userLabel || 'the user';
-    const aiName = state.aiLabel || 'Kai';
-    const relativeTime = (ts) => {
-      if (!ts) return '';
-      const diff = Date.now() - ts;
-      const min = Math.floor(diff / 60000);
-      if (min < 1) return 'just now';
-      if (min < 60) return `${min} minute${min === 1 ? '' : 's'} ago`;
-      const hr = Math.floor(min / 60);
-      if (hr < 24) return `${hr} hour${hr === 1 ? '' : 's'} ago`;
-      const day = Math.floor(hr / 24);
-      if (day < 30) return `${day} day${day === 1 ? '' : 's'} ago`;
-      const mo = Math.floor(day / 30);
-      if (mo < 12) return `${mo} month${mo === 1 ? '' : 's'} ago`;
-      const yr = Math.floor(mo / 12);
-      return `${yr} year${yr === 1 ? '' : 's'} ago`;
-    };
-    const block = mems.map(m => {
-      const ts = m.updatedAt || m.capturedAt || m.createdAt;
-      const when = relativeTime(ts);
-      const header = when ? `## ${m.name} (${when})` : `## ${m.name}`;
-      return `${header}\n${m.content}`;
-    }).join('\n\n---\n\n');
-    const framing = `These are notes from past conversations between ${userName} and ${aiName} that may be relevant to the current message. The timestamp on each is when it was last captured or updated.`;
+    const block = mems.map(m => `## ${m.name} (${memoryAgeLabel(m)})\n${m.content}`).join('\n\n---\n\n');
+    const framing = `These are notes from past conversations between ${state.userLabel || 'the user'} and ${state.aiLabel || 'Kai'} that may be relevant to the current message.`;
     messages.push({ role: 'system', content: `[RELEVANT MEMORIES]\n\n${framing}\n\n${block}` });
   }
   const ctx = state.contextMessages || 10;
@@ -2116,10 +2171,6 @@ async function sendMessage() {
     // is mentioned gets its summary into context this turn. The slow half
     // (semantic scan) runs inside updateSessionThreads below for oblique cases.
     reactivateThreadsByWordMatch(chat, text);
-
-    // Per-turn archive check — runs every send (not just on updater cadence)
-    // so threads archive on schedule even if the LLM updater isn't due to run.
-    archiveStaleThreads(chat);
 
     await summarizeOlderMessages(chat);
     const apiMsgs = await buildApiMessages(chat, userContent);
@@ -2403,17 +2454,26 @@ function editMessage(idx) {
   const msg = chat.messages[idx];
   const text = typeof msg.content === 'string' ? msg.content : msg.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
   chat.messages = chat.messages.slice(0, idx);
-  // Threads were derived from messages that no longer exist. Clear them so the
-  // next updater pass rebuilds from the (now-corrected) conversation. The
-  // lastThreadUpdateAt counter also resets so the updater fires on the next send
-  // instead of waiting for window-cadence.
-  chat.threads = [];
-  chat.lastThreadUpdateAt = undefined;
+
+  // #5 RECONCILE (not wipe): any thread last touched at or after the edit point
+  // may contain content from messages that no longer exist. Flag it so the next
+  // updater run reconciles its summary against the current conversation. Threads
+  // built from earlier, still-valid messages are left untouched.
+  if (Array.isArray(chat.threads)) {
+    for (const t of chat.threads) {
+      if ((t.lastTouchedTurn ?? 0) >= idx) {
+        t.needsReconcile = true;
+      }
+    }
+    // Force the updater to run on the next send rather than waiting for cadence,
+    // so reconciliation isn't delayed a full window.
+    chat.lastThreadUpdateAt = undefined;
+  }
+
   chat.updatedAt = Date.now();
   saveState();
   renderMessages();
   renderChatList();
-  updateInfoBar([], null, chat.threads);
   const input = document.getElementById('inputField');
   input.value = text;
   autoResize(input);
@@ -2523,33 +2583,6 @@ async function testVoice() {
 // Holds the unsaved draft from a capture. Cleared on close-without-save.
 let pendingMemoryDraft = null;
 
-// PER-TURN ARCHIVE CHECK: deterministic, no LLM call.
-// Runs on every send so threads archive on schedule (3 turns of disuse),
-// independent of the LLM-based updater cadence (which runs every N turns
-// where N = window size).
-// A thread archives if it hasn't been touched in 3+ turns. The "referenced
-// in recent transcript" check happens via the word-match reactivation pass
-// that runs synchronously before each send — so a thread that's been
-// referenced gets its lastTouchedTurn bumped before this check runs.
-function archiveStaleThreads(chat) {
-  if (!chat || !chat.threads || !chat.threads.length) return;
-  const ARCHIVE_AFTER_TURNS = 3;
-  const turnCount = chat.messages ? chat.messages.length : 0;
-  let changed = false;
-  for (const t of chat.threads) {
-    if (t.archived) continue;
-    const turnsSinceTouch = turnCount - (t.lastTouchedTurn || turnCount);
-    if (turnsSinceTouch >= ARCHIVE_AFTER_TURNS) {
-      t.archived = true;
-      changed = true;
-    }
-  }
-  if (changed) {
-    saveState();
-    updateInfoBar([], null, chat.threads);
-  }
-}
-
 // SYNCHRONOUS REACTIVATION: cheap word-match check that runs BEFORE the main
 // response is generated. If the user just mentioned a word from an archived
 // thread's name (3+ chars), reactivate that thread immediately so its summary
@@ -2597,7 +2630,7 @@ function reactivateThreadsByWordMatch(chat, userText) {
 //
 // Each thread now has:
 //   id, name, summary (prose), lastTouchedTurn, archived (bool),
-//   lastPromotedAtTurn (turn count of last promotion, 0 if never)
+//   updatesSincePromotion (counter for portability check)
 async function updateSessionThreads(chat) {
   if (!chat || !state.apiKey) return;
   if (!chat.messages || chat.messages.length < 2) return;
@@ -2627,7 +2660,9 @@ async function updateSessionThreads(chat) {
   const existing = activeThreads.map(t => ({
     id: t.id,
     name: t.name,
-    summary: t.summary || ''
+    summary: t.summary || '',
+    keywords: Array.isArray(t.keywords) ? t.keywords : [],
+    needsReconcile: !!t.needsReconcile
   }));
 
   const prompt = `You track ongoing topical threads in a conversation between ${userName} and ${aiName}. ${userName} often holds multiple parallel topics at once. Your job is to keep the thread list current.
@@ -2644,9 +2679,11 @@ Update the thread list:
 1. If recent conversation touches an existing thread, integrate the new information into its summary. Build on what's already there.
 2. Each thread's subject should name a domain of activity. Registers, moods, and qualities of engagement are not subjects — they belong inside the summary as texture. If two threads name the same domain, merge them: combine the summaries, keep the more accurate name, drop the other ID.
 3. Do not close existing threads. Just leave older ones unchanged if they aren't touched here.
+4. For each thread, provide 3-5 keywords: short lowercase words or short phrases someone might use to bring this topic back up later. Specific nouns, names, places, topics drawn from the summary. Not generic words. These help the topic be recognized when it returns in conversation.
+5. Any thread marked "needsReconcile": true has a summary that is out of date — the conversation was edited since it was written. Align that thread's summary to the recent conversation above: keep what is still accurate, revise what changed, remove what no longer applies.
 
 Return ONLY a JSON object with a "threads" array, no preamble, no markdown:
-{"threads": [{"id": "preserve existing IDs, generate new ones as thread_<short>", "name": "short name 2-5 words", "summary": "prose record of what was said, what happened, and what was decided or planned"}]}
+{"threads": [{"id": "preserve existing IDs, generate new ones as thread_<short>", "name": "short name 2-5 words", "summary": "prose record of what was said, what happened, and what was decided or planned", "keywords": ["specific", "topic", "words"]}]}
 
 If nothing has changed, return the existing list unchanged.`;
 
@@ -2710,9 +2747,15 @@ If nothing has changed, return the existing list unchanged.`;
         id,
         name: String(t.name).slice(0, 80),
         summary: newSummary,
+        keywords: Array.isArray(t.keywords)
+          ? t.keywords.map(k => String(k).toLowerCase().slice(0, 40)).slice(0, 8)
+          : (prev?.keywords || []),
         lastTouchedTurn: summaryChanged ? turnCount : (prev?.lastTouchedTurn ?? turnCount),
         archived: false,
-        lastPromotedAtTurn: prev?.lastPromotedAtTurn ?? 0
+        needsReconcile: false,
+        updatesSincePromotion: summaryChanged
+          ? ((prev?.updatesSincePromotion ?? 0) + 1)
+          : (prev?.updatesSincePromotion ?? 0)
       };
     });
 
@@ -2720,20 +2763,11 @@ If nothing has changed, return the existing list unchanged.`;
   // sees archived threads, so they pass through untouched).
   const archived = (chat.threads || []).filter(t => t.archived);
 
-  // NOTE: archive check is now done per-turn in archiveStaleThreads(), not here.
-  // This function only handles content updates, reactivation, and promotion.
+  // NOTE: archiving and keyword/name reactivation are handled per-send by
+  // fastThreadMaintenance() — see buildApiMessages. The updater no longer
+  // duplicates that work. The semantic reactivation pass below remains as the
+  // model-backed third fallback for oblique references that word-matching misses.
   const transcriptLower = transcript.toLowerCase();
-
-  // REACTIVATION PASS: any archived thread whose name appears in the recent
-  // transcript wakes back up (un-archives, resets touch turn).
-  for (const t of archived) {
-    const nameWords = (t.name || '').toLowerCase().split(/\W+/).filter(w => w.length >= 3);
-    const referenced = nameWords.some(w => transcriptLower.includes(w));
-    if (referenced) {
-      t.archived = false;
-      t.lastTouchedTurn = turnCount;
-    }
-  }
 
   // SEMANTIC REACTIVATION PASS: word-match misses oblique references like
   // "the recipe from earlier" or "should I call her again?" — these don't
@@ -2790,19 +2824,23 @@ Return ONLY a JSON object listing the IDs of any archived threads that were brou
     }
   }
 
-  // PORTABILITY PROMOTION: every active thread that's been touched since its
-  // last promotion gets a promotion pass. The re-promotion logic in
-  // promoteThreadIfPortable merges with the existing card (no duplicates).
-  // Threads with no new content since last promotion are skipped to avoid
-  // redundant LLM calls.
+  // PORTABILITY PROMOTION: for any active thread whose updatesSincePromotion
+  // hits the threshold, run a portability check. If portable content exists,
+  // promote to a memory card. Reset the counter regardless of outcome.
+  // Also: any thread archiving on this pass gets a promotion check.
+  const PROMOTE_AFTER_UPDATES = 35;
   const promotionCandidates = [];
   for (const t of updatedActive) {
-    const lastTouched = t.lastTouchedTurn || 0;
-    const lastPromoted = t.lastPromotedAtTurn || 0;
-    if (lastTouched > lastPromoted) {
+    if (t.updatesSincePromotion >= PROMOTE_AFTER_UPDATES) {
       promotionCandidates.push(t);
-      t.lastPromotedAtTurn = turnCount;
+      t.updatesSincePromotion = 0;  // reset counter regardless of outcome
+    } else if (t.archived) {
+      promotionCandidates.push(t);
     }
+  }
+  for (const t of archived) {
+    // Archive-trigger for threads that were archived earlier and just woke up
+    // would have been handled before they archived. Skip these.
   }
 
   // Merge active + archived for storage
@@ -2835,10 +2873,7 @@ async function promoteThreadIfPortable(thread, chat) {
     console.warn('Thread promotion extraction failed:', e);
     return;
   }
-  if (!cards.length) {
-    console.warn(`Extractor returned no cards for thread "${thread.name}". Thread summary length: ${thread.summary.length} chars.`);
-    return;
-  }
+  if (!cards.length) return;
 
   // Re-promotion check: is there already a card from this thread?
   const existingIdx = state.memories.findIndex(m => m.sourceThread === thread.id);
