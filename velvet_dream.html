@@ -2677,10 +2677,10 @@ For each thread, the summary records what was said, what happened, what was deci
 
 Update the thread list:
 1. If recent conversation touches an existing thread, integrate the new information into its summary. Build on what's already there.
-2. Each thread's subject should name a domain of activity. Registers, moods, and qualities of engagement are not subjects — they belong inside the summary as texture. If two threads name the same domain, merge them: combine the summaries, keep the more accurate name, drop the other ID.
+2. When you notice a drift or transition to something new, open a new thread.
 3. Do not close existing threads. Just leave older ones unchanged if they aren't touched here.
 4. For each thread, provide 3-5 keywords: short lowercase words or short phrases someone might use to bring this topic back up later. Specific nouns, names, places, topics drawn from the summary. Not generic words. These help the topic be recognized when it returns in conversation.
-5. Any thread marked "needsReconcile": true has a summary that is out of date — the conversation was edited since it was written. Align that thread's summary to the recent conversation above: keep what is still accurate, revise what changed, remove what no longer applies.
+5. Any thread marked "needsReconcile": true has a summary that is out of date — the conversation was edited since it was written. Look at the recent conversation block and identify where the change has been made. Keep the summary as it was, revise what changed, and update it.
 
 Return ONLY a JSON object with a "threads" array, no preamble, no markdown:
 {"threads": [{"id": "preserve existing IDs, generate new ones as thread_<short>", "name": "short name 2-5 words", "summary": "prose record of what was said, what happened, and what was decided or planned", "keywords": ["specific", "topic", "words"]}]}
