@@ -2673,7 +2673,7 @@ ${JSON.stringify(existing, null, 2)}
 RECENT CONVERSATION:
 ${transcript}
 
-For each thread, the summary records what was said, what happened, what was decided or planned, and the details. Names, numbers, decisions, plans, specifics — whatever came up in conversation about that topic, including commitments and intentions for the future. Not interpretation. Not feelings about it. Just the record.
+For each thread, the summary records what was said, what happened, what was decided or planned, and the details. Names, numbers, decisions, plans, specifics — whatever came up in conversation about that topic, including commitments and intentions for the future.
 
 Update the thread list:
 1. If recent conversation touches an existing thread, integrate the new information into its summary. Build on what's already there.
@@ -2824,20 +2824,9 @@ Return ONLY a JSON object listing the IDs of any archived threads that were brou
     }
   }
 
-  // PORTABILITY PROMOTION: for any active thread whose updatesSincePromotion
-  // hits the threshold, run a portability check. If portable content exists,
-  // promote to a memory card. Reset the counter regardless of outcome.
-  // Also: any thread archiving on this pass gets a promotion check.
-  const PROMOTE_AFTER_UPDATES = 35;
-  const promotionCandidates = [];
-  for (const t of updatedActive) {
-    if (t.updatesSincePromotion >= PROMOTE_AFTER_UPDATES) {
-      promotionCandidates.push(t);
-      t.updatesSincePromotion = 0;  // reset counter regardless of outcome
-    } else if (t.archived) {
-      promotionCandidates.push(t);
-    }
-  }
+  // PORTABILITY PROMOTION: every active thread gets a portability check each
+  // cycle. If portable content exists, promote to a memory card.
+  const promotionCandidates = [...updatedActive];
   for (const t of archived) {
     // Archive-trigger for threads that were archived earlier and just woke up
     // would have been handled before they archived. Skip these.
