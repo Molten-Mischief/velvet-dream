@@ -332,6 +332,41 @@ html, body {
 .typing-indicator span:nth-child(3) { animation-delay: 0.4s; }
 @keyframes blink { 0%, 80%, 100% { opacity: 0.2; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1); } }
 
+
+/* ===== VOICE PROVIDER CAROUSEL ===== */
+.voice-provider-carousel {
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 4px 0 12px;
+  scroll-snap-type: x proximity;
+}
+.voice-provider-card {
+  min-width: 120px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px 10px;
+  color: var(--text-secondary);
+  cursor: pointer;
+  font-family: 'DM Sans', sans-serif;
+  text-align: left;
+  transition: all 0.18s;
+  scroll-snap-align: start;
+}
+.voice-provider-card:hover { border-color: var(--accent-dim); color: var(--text-primary); }
+.voice-provider-card.active {
+  border-color: var(--accent);
+  background: var(--accent-glow);
+  color: var(--accent);
+}
+.voice-provider-title { font-size: 13px; font-weight: 700; margin-bottom: 4px; }
+.voice-provider-sub { font-size: 10.5px; color: var(--text-muted); line-height: 1.35; }
+.voice-panel { display: none; }
+.voice-panel.active { display: block; }
+.voice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+@media (max-width: 600px) { .voice-grid { grid-template-columns: 1fr; } }
+
 /* ===== INPUT ===== */
 .input-area { padding: 8px 24px 24px; background: transparent; flex-shrink: 0; max-width: 800px; width: 100%; margin: 0 auto; }
 .input-wrapper { display: flex; gap: 8px; align-items: flex-end; }
@@ -597,31 +632,109 @@ html, body {
       <div class="section-divider" onclick="toggleSection('voiceSection',this)"><span class="toggle-arrow">▼</span> Voice (Listen)</div>
       <div class="collapsible-section" id="voiceSection">
         <div style="padding-top:12px">
-          <div class="form-group">
-            <label>ElevenLabs API Key (for voice only)</label>
-            <div class="api-key-wrapper"><input type="password" id="elevenLabsKeyInput" placeholder="xi-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleElevenLabsKeyVis()">👁</button></div>
-            <div class="hint">Separate from OpenRouter. Used only for text-to-speech. Stored only on your device.</div>
+          <div class="voice-provider-carousel" id="voiceProviderCarousel">
+            <button type="button" class="voice-provider-card" data-provider="browser" onclick="selectVoiceProvider('browser')"><div class="voice-provider-title">Browser</div><div class="voice-provider-sub">No key. Device voice.</div></button>
+            <button type="button" class="voice-provider-card" data-provider="openai" onclick="selectVoiceProvider('openai')"><div class="voice-provider-title">OpenAI</div><div class="voice-provider-sub">Nova, Onyx, Echo…</div></button>
+            <button type="button" class="voice-provider-card" data-provider="elevenlabs" onclick="selectVoiceProvider('elevenlabs')"><div class="voice-provider-title">ElevenLabs</div><div class="voice-provider-sub">Custom Voice ID.</div></button>
+            <button type="button" class="voice-provider-card" data-provider="xai" onclick="selectVoiceProvider('xai')"><div class="voice-provider-title">xAI / Grok</div><div class="voice-provider-sub">Voice ID or built-in.</div></button>
           </div>
-          <div class="form-group">
-            <label>ElevenLabs Voice ID</label>
-            <input type="text" id="elevenLabsVoiceIdInput" placeholder="Paste your custom voice ID here" autocomplete="off">
-            <div class="hint">In ElevenLabs, open the custom voice you made and copy its Voice ID.</div>
+
+          <div class="voice-panel" id="voicePanel-browser">
+            <div class="hint" style="margin-bottom:12px">Uses the built-in voice on this device. No API key needed.</div>
           </div>
-          <div class="form-group">
-            <label>ElevenLabs Model</label>
-            <select id="elevenLabsModelSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b5f52' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;padding-right:36px">
-              <option value="eleven_multilingual_v2">Multilingual v2 — expressive, high quality</option>
-              <option value="eleven_flash_v2_5">Flash v2.5 — fastest</option>
-              <option value="eleven_turbo_v2_5">Turbo v2.5 — balanced</option>
-            </select>
+
+          <div class="voice-panel" id="voicePanel-openai">
+            <div class="form-group">
+              <label>OpenAI API Key (for voice only)</label>
+              <div class="api-key-wrapper"><input type="password" id="openaiKeyInput" placeholder="sk-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleOpenaiKeyVis()">👁</button></div>
+              <div class="hint">Separate from OpenRouter. Used only for text-to-speech.</div>
+            </div>
+            <div class="voice-grid">
+              <div class="form-group">
+                <label>OpenAI Voice</label>
+                <select id="openaiVoiceSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer">
+                  <option value="nova">Nova — warm, conversational</option>
+                  <option value="shimmer">Shimmer — expressive, clear</option>
+                  <option value="alloy">Alloy — neutral, balanced</option>
+                  <option value="coral">Coral — warm, bright</option>
+                  <option value="echo">Echo — deep, calm</option>
+                  <option value="fable">Fable — storytelling</option>
+                  <option value="onyx">Onyx — deep</option>
+                  <option value="sage">Sage — measured</option>
+                  <option value="ash">Ash — soft</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>OpenAI Model</label>
+                <select id="openaiTtsModelSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer">
+                  <option value="tts-1">tts-1 — fast</option>
+                  <option value="tts-1-hd">tts-1-hd — higher quality</option>
+                </select>
+              </div>
+            </div>
           </div>
+
+          <div class="voice-panel" id="voicePanel-elevenlabs">
+            <div class="form-group">
+              <label>ElevenLabs API Key</label>
+              <div class="api-key-wrapper"><input type="password" id="elevenLabsKeyInput" placeholder="xi-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleElevenLabsKeyVis()">👁</button></div>
+              <div class="hint">Paste once, then switch providers without re-entering it.</div>
+            </div>
+            <div class="form-group">
+              <label>ElevenLabs Voice ID</label>
+              <input type="text" id="elevenLabsVoiceIdInput" placeholder="Paste your custom voice ID here" autocomplete="off">
+            </div>
+            <div class="voice-grid">
+              <div class="form-group">
+                <label>ElevenLabs Model</label>
+                <select id="elevenLabsModelSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer">
+                  <option value="eleven_multilingual_v2">Multilingual v2 — expressive</option>
+                  <option value="eleven_flash_v2_5">Flash v2.5 — fastest</option>
+                  <option value="eleven_turbo_v2_5">Turbo v2.5 — balanced</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label>Style</label>
+                <input type="number" id="elevenLabsStyleInput" min="0" max="1" step="0.05" value="0.35">
+              </div>
+            </div>
+            <div class="voice-grid">
+              <div class="form-group">
+                <label>Stability</label>
+                <input type="number" id="elevenLabsStabilityInput" min="0" max="1" step="0.05" value="0.45">
+              </div>
+              <div class="form-group">
+                <label>Similarity Boost</label>
+                <input type="number" id="elevenLabsSimilarityInput" min="0" max="1" step="0.05" value="0.85">
+              </div>
+            </div>
+          </div>
+
+          <div class="voice-panel" id="voicePanel-xai">
+            <div class="form-group">
+              <label>xAI API Key</label>
+              <div class="api-key-wrapper"><input type="password" id="xaiKeyInput" placeholder="xai-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleXaiKeyVis()">👁</button></div>
+              <div class="hint">For Grok/xAI text-to-speech. Separate from OpenRouter.</div>
+            </div>
+            <div class="voice-grid">
+              <div class="form-group">
+                <label>xAI Voice ID</label>
+                <input type="text" id="xaiVoiceIdInput" placeholder="eve or custom voice ID" autocomplete="off">
+              </div>
+              <div class="form-group">
+                <label>Language</label>
+                <input type="text" id="xaiLanguageInput" placeholder="en" autocomplete="off">
+              </div>
+            </div>
+          </div>
+
           <div class="form-group">
             <label>Speed</label>
             <div class="slider-row"><input type="range" id="voiceSpeedSlider" min="0.7" max="1.5" step="0.05" value="1.0"><span class="slider-val" id="voiceSpeedVal">1.00</span></div>
             <div class="hint">1.0 is natural pace. Lower for slower, higher for faster.</div>
           </div>
-          <button class="action-btn" style="width:100%;margin-bottom:8px" onclick="testVoice()">▶ Test voice</button>
-          <div class="hint">Falls back to browser voice if ElevenLabs is not configured.</div>
+          <button class="action-btn" style="width:100%;margin-bottom:8px" onclick="testVoice()">▶ Test selected voice</button>
+          <div class="hint">The selected provider is saved with the rest of your settings.</div>
         </div>
       </div>
       <div class="section-divider" onclick="toggleSection('supabaseSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> Supabase (Cloud Sync)</div>
@@ -784,11 +897,44 @@ let state = {
   apiKey: '', systemPrompt: '', userLabel: 'You', aiLabel: 'Kai',
   contextMessages: 10, maxMemories: 3, summarizeAfter: 0,
   params: { temperature: 0.85, top_p: 0.90, top_k: 0, frequency_penalty: 0, presence_penalty: 0, repetition_penalty: 1.15, min_p: 0.05, max_tokens: 0 },
-  voiceName: 'elevenlabs', voiceSpeed: 1.0, elevenLabsKey: '', elevenLabsVoiceId: '', elevenLabsModel: 'eleven_multilingual_v2',
+  voiceName: 'nova', voiceSpeed: 1.0, openaiKey: '',
+  voice: {
+    provider: 'browser', speed: 1.0,
+    providers: {
+      openai: { apiKey: '', voice: 'nova', model: 'tts-1' },
+      elevenlabs: { apiKey: '', voiceId: '', model: 'eleven_multilingual_v2', stability: 0.45, similarityBoost: 0.85, style: 0.35 },
+      xai: { apiKey: '', voiceId: 'eve', language: 'en' },
+      browser: {}
+    }
+  },
   welcomeAvatar: '', customModels: [], memories: [], chats: [],
   activeChatId: null, isStreaming: false,
   stateTimestamp: 0, // updated on every save, used for newest-wins sync
 };
+
+function ensureVoiceState() {
+  const defaults = {
+    provider: 'browser', speed: 1.0,
+    providers: {
+      openai: { apiKey: '', voice: 'nova', model: 'tts-1' },
+      elevenlabs: { apiKey: '', voiceId: '', model: 'eleven_multilingual_v2', stability: 0.45, similarityBoost: 0.85, style: 0.35 },
+      xai: { apiKey: '', voiceId: 'eve', language: 'en' },
+      browser: {}
+    }
+  };
+  state.voice = deepMerge(defaults, state.voice || {});
+  // Migrate older single-provider fields without destroying them.
+  if (state.openaiKey && !state.voice.providers.openai.apiKey) state.voice.providers.openai.apiKey = state.openaiKey;
+  if (state.voiceName && state.voiceName !== 'elevenlabs' && !state.voice.providers.openai.voice) state.voice.providers.openai.voice = state.voiceName;
+  if (state.elevenLabsKey && !state.voice.providers.elevenlabs.apiKey) state.voice.providers.elevenlabs.apiKey = state.elevenLabsKey;
+  if (state.elevenLabsVoiceId && !state.voice.providers.elevenlabs.voiceId) state.voice.providers.elevenlabs.voiceId = state.elevenLabsVoiceId;
+  if (state.elevenLabsModel && !state.voice.providers.elevenlabs.model) state.voice.providers.elevenlabs.model = state.elevenLabsModel;
+  if (state.xaiKey && !state.voice.providers.xai.apiKey) state.voice.providers.xai.apiKey = state.xaiKey;
+  if (state.xaiVoiceId && !state.voice.providers.xai.voiceId) state.voice.providers.xai.voiceId = state.xaiVoiceId;
+  if (state.voiceSpeed && !state.voice.speed) state.voice.speed = state.voiceSpeed;
+  if (!['browser', 'openai', 'elevenlabs', 'xai'].includes(state.voice.provider)) state.voice.provider = 'browser';
+}
+
 let editingMemoryId = null;
 let abortController = null;
 let pendingImages = [];
@@ -841,6 +987,8 @@ async function loadState() {
     });
     db.close();
     if (saved) state = deepMerge(state, saved);
+    ensureVoiceState();
+    state.isStreaming = false;
     // Backfill startedModel for chats that pre-date this field
     if (state.chats && state.chats.length) {
       state.chats.forEach(c => {
@@ -1086,6 +1234,9 @@ function enterOfflineMode() {
 
 async function enterApp() {
   await loadState();
+  state.isStreaming = false;
+  abortController = null;
+  updateSendBtn();
   renderModelSelect();
   renderChatList();
   if (state.activeChatId) {
@@ -2485,37 +2636,171 @@ function editMessage(idx) {
   input.focus();
 }
 
-// ===== VOICE (ElevenLabs TTS with browser fallback) =====
+// ===== VOICE (provider switchboard with browser fallback) =====
 let currentAudio = null;
 
-async function playElevenLabsTTS(text, voiceId, speed) {
-  if (!state.elevenLabsKey) throw new Error('Missing ElevenLabs API key');
-  if (!voiceId) throw new Error('Missing ElevenLabs voice ID');
+function activeVoiceProvider() {
+  ensureVoiceState();
+  return state.voice.provider || 'browser';
+}
 
-  const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`, {
+function captureVoicePanelInputs() {
+  ensureVoiceState();
+  const openaiKeyEl = document.getElementById('openaiKeyInput');
+  if (!openaiKeyEl) return;
+
+  state.voice.providers.openai.apiKey = openaiKeyEl.value.trim();
+  state.voice.providers.openai.voice = document.getElementById('openaiVoiceSelect')?.value || 'nova';
+  state.voice.providers.openai.model = document.getElementById('openaiTtsModelSelect')?.value || 'tts-1';
+
+  state.voice.providers.elevenlabs.apiKey = document.getElementById('elevenLabsKeyInput')?.value.trim() || '';
+  state.voice.providers.elevenlabs.voiceId = document.getElementById('elevenLabsVoiceIdInput')?.value.trim() || '';
+  state.voice.providers.elevenlabs.model = document.getElementById('elevenLabsModelSelect')?.value || 'eleven_multilingual_v2';
+  state.voice.providers.elevenlabs.stability = clamp01(parseFloat(document.getElementById('elevenLabsStabilityInput')?.value));
+  state.voice.providers.elevenlabs.similarityBoost = clamp01(parseFloat(document.getElementById('elevenLabsSimilarityInput')?.value));
+  state.voice.providers.elevenlabs.style = clamp01(parseFloat(document.getElementById('elevenLabsStyleInput')?.value));
+
+  state.voice.providers.xai.apiKey = document.getElementById('xaiKeyInput')?.value.trim() || '';
+  state.voice.providers.xai.voiceId = document.getElementById('xaiVoiceIdInput')?.value.trim() || 'eve';
+  state.voice.providers.xai.language = document.getElementById('xaiLanguageInput')?.value.trim() || 'en';
+
+  state.voice.speed = parseFloat(document.getElementById('voiceSpeedSlider')?.value) || 1.0;
+  // Legacy mirrors for old backups/imports and any older callers.
+  state.voiceSpeed = state.voice.speed;
+  state.openaiKey = state.voice.providers.openai.apiKey;
+  state.voiceName = state.voice.providers.openai.voice || 'nova';
+  state.elevenLabsKey = state.voice.providers.elevenlabs.apiKey;
+  state.elevenLabsVoiceId = state.voice.providers.elevenlabs.voiceId;
+  state.elevenLabsModel = state.voice.providers.elevenlabs.model;
+  state.xaiKey = state.voice.providers.xai.apiKey;
+  state.xaiVoiceId = state.voice.providers.xai.voiceId;
+}
+
+function clamp01(v) {
+  if (!Number.isFinite(v)) return 0;
+  return Math.max(0, Math.min(1, v));
+}
+
+function selectVoiceProvider(provider) {
+  ensureVoiceState();
+  captureVoicePanelInputs();
+  state.voice.provider = provider;
+  renderVoiceProviderUI();
+}
+
+function renderVoiceProviderUI() {
+  ensureVoiceState();
+  const provider = activeVoiceProvider();
+  document.querySelectorAll('.voice-provider-card').forEach(card => {
+    card.classList.toggle('active', card.dataset.provider === provider);
+  });
+  document.querySelectorAll('.voice-panel').forEach(panel => {
+    panel.classList.toggle('active', panel.id === `voicePanel-${provider}`);
+  });
+}
+
+function loadVoiceSettingsIntoUI() {
+  ensureVoiceState();
+  const v = state.voice;
+  const openai = v.providers.openai;
+  const eleven = v.providers.elevenlabs;
+  const xai = v.providers.xai;
+
+  const setVal = (id, value) => { const el = document.getElementById(id); if (el) el.value = value ?? ''; };
+  setVal('openaiKeyInput', openai.apiKey || '');
+  setVal('openaiVoiceSelect', openai.voice || 'nova');
+  setVal('openaiTtsModelSelect', openai.model || 'tts-1');
+  setVal('elevenLabsKeyInput', eleven.apiKey || '');
+  setVal('elevenLabsVoiceIdInput', eleven.voiceId || '');
+  setVal('elevenLabsModelSelect', eleven.model || 'eleven_multilingual_v2');
+  setVal('elevenLabsStabilityInput', eleven.stability ?? 0.45);
+  setVal('elevenLabsSimilarityInput', eleven.similarityBoost ?? 0.85);
+  setVal('elevenLabsStyleInput', eleven.style ?? 0.35);
+  setVal('xaiKeyInput', xai.apiKey || '');
+  setVal('xaiVoiceIdInput', xai.voiceId || 'eve');
+  setVal('xaiLanguageInput', xai.language || 'en');
+  setSlider('voiceSpeedSlider', 'voiceSpeedVal', v.speed || state.voiceSpeed || 1.0);
+  renderVoiceProviderUI();
+}
+
+async function playOpenAITTS(text, speed) {
+  const cfg = state.voice.providers.openai;
+  if (!cfg.apiKey) throw new Error('Missing OpenAI API key');
+  const resp = await fetch('https://api.openai.com/v1/audio/speech', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'xi-api-key': state.elevenLabsKey,
+      'Authorization': `Bearer ${cfg.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: cfg.model || 'tts-1',
+      input: text.slice(0, 4096),
+      voice: cfg.voice || 'nova',
+      speed: speed || 1.0,
+      response_format: 'mp3',
+    })
+  });
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`OpenAI TTS error ${resp.status}: ${errText.slice(0, 160) || resp.statusText}`);
+  }
+  return playAudioBlob(await resp.blob(), speed);
+}
+
+async function playElevenLabsTTS(text, speed) {
+  const cfg = state.voice.providers.elevenlabs;
+  if (!cfg.apiKey) throw new Error('Missing ElevenLabs API key');
+  if (!cfg.voiceId) throw new Error('Missing ElevenLabs voice ID');
+
+  const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(cfg.voiceId)}?output_format=mp3_44100_128`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'xi-api-key': cfg.apiKey,
     },
     body: JSON.stringify({
       text: text.slice(0, 5000),
-      model_id: state.elevenLabsModel || 'eleven_multilingual_v2',
+      model_id: cfg.model || 'eleven_multilingual_v2',
       voice_settings: {
-        stability: 0.45,
-        similarity_boost: 0.85,
-        style: 0.35,
+        stability: cfg.stability ?? 0.45,
+        similarity_boost: cfg.similarityBoost ?? 0.85,
+        style: cfg.style ?? 0.35,
         use_speaker_boost: true
       }
     })
   });
-
   if (!resp.ok) {
     const errText = await resp.text().catch(() => '');
     throw new Error(`ElevenLabs TTS error ${resp.status}: ${errText.slice(0, 160) || resp.statusText}`);
   }
+  return playAudioBlob(await resp.blob(), speed);
+}
 
-  const blob = await resp.blob();
+async function playXaiTTS(text, speed) {
+  const cfg = state.voice.providers.xai;
+  if (!cfg.apiKey) throw new Error('Missing xAI API key');
+  const resp = await fetch('https://api.x.ai/v1/tts', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${cfg.apiKey}`,
+    },
+    body: JSON.stringify({
+      text: text.slice(0, 15000),
+      voice_id: cfg.voiceId || 'eve',
+      language: cfg.language || 'en',
+      output_format: { codec: 'mp3', sample_rate: 24000, bit_rate: 128000 },
+      speed: speed || 1.0,
+    })
+  });
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`xAI TTS error ${resp.status}: ${errText.slice(0, 160) || resp.statusText}`);
+  }
+  return playAudioBlob(await resp.blob(), speed);
+}
+
+function playAudioBlob(blob, speed) {
   const url = URL.createObjectURL(blob);
   return new Promise((resolve, reject) => {
     const audio = new Audio(url);
@@ -2548,6 +2833,16 @@ function browserTTSFallback(text, speed) {
   });
 }
 
+async function playSelectedVoice(text) {
+  captureVoicePanelInputs();
+  const provider = activeVoiceProvider();
+  const speed = state.voice.speed || 1.0;
+  if (provider === 'openai') return playOpenAITTS(text, speed);
+  if (provider === 'elevenlabs') return playElevenLabsTTS(text, speed);
+  if (provider === 'xai') return playXaiTTS(text, speed);
+  return browserTTSFallback(text, speed);
+}
+
 async function readAloud(btn, idx) {
   if (currentAudio || (typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking)) {
     stopAudio();
@@ -2562,13 +2857,9 @@ async function readAloud(btn, idx) {
 
   btn.textContent = 'Stop';
   try {
-    if (state.elevenLabsKey && state.elevenLabsVoiceId) {
-      await playElevenLabsTTS(text, state.elevenLabsVoiceId, state.voiceSpeed);
-    } else {
-      await browserTTSFallback(text, state.voiceSpeed);
-    }
+    await playSelectedVoice(text);
   } catch (e) {
-    if (state.elevenLabsKey) showToast('Voice error — check ElevenLabs key and Voice ID');
+    showToast(e.message || 'Voice error — check selected provider settings');
     console.error('TTS error:', e);
   }
   btn.textContent = 'Listen';
@@ -2576,28 +2867,10 @@ async function readAloud(btn, idx) {
 
 async function testVoice() {
   stopAudio();
-  const speed = parseFloat(document.getElementById('voiceSpeedSlider').value) || 1.0;
-  const testKey = document.getElementById('elevenLabsKeyInput').value.trim();
-  const testVoiceId = document.getElementById('elevenLabsVoiceIdInput').value.trim();
-  const testModel = document.getElementById('elevenLabsModelSelect').value || 'eleven_multilingual_v2';
-
   try {
-    if (testKey && testVoiceId) {
-      const origKey = state.elevenLabsKey;
-      const origVoiceId = state.elevenLabsVoiceId;
-      const origModel = state.elevenLabsModel;
-      state.elevenLabsKey = testKey;
-      state.elevenLabsVoiceId = testVoiceId;
-      state.elevenLabsModel = testModel;
-      await playElevenLabsTTS('This is what I sound like at this speed.', testVoiceId, speed);
-      state.elevenLabsKey = origKey;
-      state.elevenLabsVoiceId = origVoiceId;
-      state.elevenLabsModel = origModel;
-    } else {
-      await browserTTSFallback('This is what I sound like at this speed.', speed);
-    }
+    await playSelectedVoice('This is what I sound like at this speed.');
   } catch (e) {
-    showToast('Could not play ElevenLabs voice — check API key and Voice ID');
+    showToast(e.message || 'Could not play selected voice');
     console.error(e);
   }
 }
@@ -3376,10 +3649,7 @@ function openSettings() {
   updateSystemPromptTokens();
   renderCustomModels();
   // Voice settings
-  document.getElementById('elevenLabsKeyInput').value = state.elevenLabsKey || '';
-  document.getElementById('elevenLabsVoiceIdInput').value = state.elevenLabsVoiceId || '';
-  document.getElementById('elevenLabsModelSelect').value = state.elevenLabsModel || 'eleven_multilingual_v2';
-  setSlider('voiceSpeedSlider', 'voiceSpeedVal', state.voiceSpeed || 1.0);
+  loadVoiceSettingsIntoUI();
   document.getElementById('settingsModal').classList.add('open');
 }
 
@@ -3539,11 +3809,7 @@ function saveSettings() {
     max_tokens: parseInt(document.getElementById('paramMaxTok').value),
   };
   state.customModels = [...document.querySelectorAll('#customModelsList input')].map(i => i.value.trim()).filter(v => v);
-  state.voiceName = 'elevenlabs';
-  state.voiceSpeed = parseFloat(document.getElementById('voiceSpeedSlider').value) || 1.0;
-  state.elevenLabsKey = document.getElementById('elevenLabsKeyInput').value.trim();
-  state.elevenLabsVoiceId = document.getElementById('elevenLabsVoiceIdInput').value.trim();
-  state.elevenLabsModel = document.getElementById('elevenLabsModelSelect').value || 'eleven_multilingual_v2';
+  captureVoicePanelInputs();
   saveState();
   renderModelSelect();
   renderMessages();
@@ -3561,8 +3827,18 @@ function toggleSupabaseKeyVis() {
   i.type = i.type === 'password' ? 'text' : 'password';
 }
 
+function toggleOpenaiKeyVis() {
+  const i = document.getElementById('openaiKeyInput');
+  i.type = i.type === 'password' ? 'text' : 'password';
+}
+
 function toggleElevenLabsKeyVis() {
   const i = document.getElementById('elevenLabsKeyInput');
+  i.type = i.type === 'password' ? 'text' : 'password';
+}
+
+function toggleXaiKeyVis() {
+  const i = document.getElementById('xaiKeyInput');
   i.type = i.type === 'password' ? 'text' : 'password';
 }
 
@@ -3936,7 +4212,10 @@ function exportAll() {
     contextMessages: state.contextMessages, maxMemories: state.maxMemories,
     summarizeAfter: state.summarizeAfter, welcomeAvatar: state.welcomeAvatar,
     params: state.params, customModels: state.customModels,
-    voiceName: state.voiceName, voiceSpeed: state.voiceSpeed, elevenLabsKey: state.elevenLabsKey, elevenLabsVoiceId: state.elevenLabsVoiceId, elevenLabsModel: state.elevenLabsModel,
+    voice: state.voice,
+    voiceName: state.voiceName, voiceSpeed: state.voiceSpeed, openaiKey: state.openaiKey,
+    elevenLabsKey: state.elevenLabsKey, elevenLabsVoiceId: state.elevenLabsVoiceId, elevenLabsModel: state.elevenLabsModel,
+    xaiKey: state.xaiKey, xaiVoiceId: state.xaiVoiceId,
     memories: state.memories, chats: state.chats,
   };
   triggerDownload(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), `velvet_dream_backup_${new Date().toISOString().slice(0, 10)}.json`);
@@ -4011,9 +4290,10 @@ function importAll(event) {
     try {
       const d = JSON.parse(e.target.result);
       if (!confirm(`Import backup from ${d.exportDate || '?'}? Replaces everything.`)) return;
-      ['apiKey', 'systemPrompt', 'userLabel', 'aiLabel', 'contextMessages', 'maxMemories', 'summarizeAfter', 'welcomeAvatar', 'customModels', 'voiceName', 'voiceSpeed', 'elevenLabsKey', 'elevenLabsVoiceId', 'elevenLabsModel', 'memories', 'chats'].forEach(k => {
+      ['apiKey', 'systemPrompt', 'userLabel', 'aiLabel', 'contextMessages', 'maxMemories', 'summarizeAfter', 'welcomeAvatar', 'customModels', 'voice', 'voiceName', 'voiceSpeed', 'openaiKey', 'elevenLabsKey', 'elevenLabsVoiceId', 'elevenLabsModel', 'xaiKey', 'xaiVoiceId', 'memories', 'chats'].forEach(k => {
         if (d[k] !== undefined) state[k] = d[k];
       });
+      ensureVoiceState();
       if (d.params) state.params = { ...state.params, ...d.params };
       if (d.chats?.length) state.activeChatId = d.chats[d.chats.length - 1].id;
       saveState();
