@@ -598,22 +598,21 @@ html, body {
       <div class="collapsible-section" id="voiceSection">
         <div style="padding-top:12px">
           <div class="form-group">
-            <label>OpenAI API Key (for voice only)</label>
-            <div class="api-key-wrapper"><input type="password" id="openaiKeyInput" placeholder="sk-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleOpenaiKeyVis()">👁</button></div>
-            <div class="hint">Separate from OpenRouter. Used only for text-to-speech. Get one at platform.openai.com</div>
+            <label>ElevenLabs API Key (for voice only)</label>
+            <div class="api-key-wrapper"><input type="password" id="elevenLabsKeyInput" placeholder="xi-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleElevenLabsKeyVis()">👁</button></div>
+            <div class="hint">Separate from OpenRouter. Used only for text-to-speech. Stored only on your device.</div>
           </div>
           <div class="form-group">
-            <label>Voice</label>
-            <select id="voiceSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b5f52' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;padding-right:36px">
-              <option value="nova">Nova — warm, conversational</option>
-              <option value="shimmer">Shimmer — expressive, clear</option>
-              <option value="alloy">Alloy — neutral, balanced</option>
-              <option value="coral">Coral — warm, bright</option>
-              <option value="echo">Echo — deep, calm</option>
-              <option value="fable">Fable — British, storytelling</option>
-              <option value="onyx">Onyx — deep, authoritative</option>
-              <option value="sage">Sage — wise, measured</option>
-              <option value="ash">Ash — soft, gentle</option>
+            <label>ElevenLabs Voice ID</label>
+            <input type="text" id="elevenLabsVoiceIdInput" placeholder="Paste your custom voice ID here" autocomplete="off">
+            <div class="hint">In ElevenLabs, open the custom voice you made and copy its Voice ID.</div>
+          </div>
+          <div class="form-group">
+            <label>ElevenLabs Model</label>
+            <select id="elevenLabsModelSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b5f52' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;padding-right:36px">
+              <option value="eleven_multilingual_v2">Multilingual v2 — expressive, high quality</option>
+              <option value="eleven_flash_v2_5">Flash v2.5 — fastest</option>
+              <option value="eleven_turbo_v2_5">Turbo v2.5 — balanced</option>
             </select>
           </div>
           <div class="form-group">
@@ -622,7 +621,7 @@ html, body {
             <div class="hint">1.0 is natural pace. Lower for slower, higher for faster.</div>
           </div>
           <button class="action-btn" style="width:100%;margin-bottom:8px" onclick="testVoice()">▶ Test voice</button>
-          <div class="hint">Falls back to browser voice if no OpenAI key is set.</div>
+          <div class="hint">Falls back to browser voice if ElevenLabs is not configured.</div>
         </div>
       </div>
       <div class="section-divider" onclick="toggleSection('supabaseSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> Supabase (Cloud Sync)</div>
@@ -785,7 +784,7 @@ let state = {
   apiKey: '', systemPrompt: '', userLabel: 'You', aiLabel: 'Kai',
   contextMessages: 10, maxMemories: 3, summarizeAfter: 0,
   params: { temperature: 0.85, top_p: 0.90, top_k: 0, frequency_penalty: 0, presence_penalty: 0, repetition_penalty: 1.15, min_p: 0.05, max_tokens: 0 },
-  voiceName: 'nova', voiceSpeed: 1.0, openaiKey: '',
+  voiceName: 'elevenlabs', voiceSpeed: 1.0, elevenLabsKey: '', elevenLabsVoiceId: '', elevenLabsModel: 'eleven_multilingual_v2',
   welcomeAvatar: '', customModels: [], memories: [], chats: [],
   activeChatId: null, isStreaming: false,
   stateTimestamp: 0, // updated on every save, used for newest-wins sync
@@ -2486,30 +2485,42 @@ function editMessage(idx) {
   input.focus();
 }
 
-// ===== VOICE (OpenAI TTS with browser fallback) =====
+// ===== VOICE (ElevenLabs TTS with browser fallback) =====
 let currentAudio = null;
 
-async function playOpenAITTS(text, voice, speed) {
-  const resp = await fetch('https://api.openai.com/v1/audio/speech', {
+async function playElevenLabsTTS(text, voiceId, speed) {
+  if (!state.elevenLabsKey) throw new Error('Missing ElevenLabs API key');
+  if (!voiceId) throw new Error('Missing ElevenLabs voice ID');
+
+  const resp = await fetch(`https://api.elevenlabs.io/v1/text-to-speech/${encodeURIComponent(voiceId)}?output_format=mp3_44100_128`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'Authorization': `Bearer ${state.openaiKey}`,
+      'xi-api-key': state.elevenLabsKey,
     },
     body: JSON.stringify({
-      model: 'tts-1',
-      input: text.slice(0, 4096),
-      voice: voice || 'nova',
-      speed: speed || 1.0,
-      response_format: 'mp3',
+      text: text.slice(0, 5000),
+      model_id: state.elevenLabsModel || 'eleven_multilingual_v2',
+      voice_settings: {
+        stability: 0.45,
+        similarity_boost: 0.85,
+        style: 0.35,
+        use_speaker_boost: true
+      }
     })
   });
-  if (!resp.ok) throw new Error(`TTS error ${resp.status}`);
+
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`ElevenLabs TTS error ${resp.status}: ${errText.slice(0, 160) || resp.statusText}`);
+  }
+
   const blob = await resp.blob();
   const url = URL.createObjectURL(blob);
   return new Promise((resolve, reject) => {
     const audio = new Audio(url);
     currentAudio = audio;
+    audio.playbackRate = speed || 1.0;
     audio.onended = () => { currentAudio = null; URL.revokeObjectURL(url); resolve(); };
     audio.onerror = (e) => { currentAudio = null; URL.revokeObjectURL(url); reject(e); };
     audio.play();
@@ -2551,13 +2562,13 @@ async function readAloud(btn, idx) {
 
   btn.textContent = 'Stop';
   try {
-    if (state.openaiKey) {
-      await playOpenAITTS(text, state.voiceName, state.voiceSpeed);
+    if (state.elevenLabsKey && state.elevenLabsVoiceId) {
+      await playElevenLabsTTS(text, state.elevenLabsVoiceId, state.voiceSpeed);
     } else {
       await browserTTSFallback(text, state.voiceSpeed);
     }
   } catch (e) {
-    if (state.openaiKey) showToast('Voice error — check OpenAI key');
+    if (state.elevenLabsKey) showToast('Voice error — check ElevenLabs key and Voice ID');
     console.error('TTS error:', e);
   }
   btn.textContent = 'Listen';
@@ -2565,21 +2576,28 @@ async function readAloud(btn, idx) {
 
 async function testVoice() {
   stopAudio();
-  const voice = document.getElementById('voiceSelect').value;
   const speed = parseFloat(document.getElementById('voiceSpeedSlider').value) || 1.0;
-  const testKey = document.getElementById('openaiKeyInput').value.trim();
+  const testKey = document.getElementById('elevenLabsKeyInput').value.trim();
+  const testVoiceId = document.getElementById('elevenLabsVoiceIdInput').value.trim();
+  const testModel = document.getElementById('elevenLabsModelSelect').value || 'eleven_multilingual_v2';
 
   try {
-    if (testKey) {
-      const origKey = state.openaiKey;
-      state.openaiKey = testKey;
-      await playOpenAITTS('This is what I sound like at this speed.', voice, speed);
-      state.openaiKey = origKey;
+    if (testKey && testVoiceId) {
+      const origKey = state.elevenLabsKey;
+      const origVoiceId = state.elevenLabsVoiceId;
+      const origModel = state.elevenLabsModel;
+      state.elevenLabsKey = testKey;
+      state.elevenLabsVoiceId = testVoiceId;
+      state.elevenLabsModel = testModel;
+      await playElevenLabsTTS('This is what I sound like at this speed.', testVoiceId, speed);
+      state.elevenLabsKey = origKey;
+      state.elevenLabsVoiceId = origVoiceId;
+      state.elevenLabsModel = origModel;
     } else {
       await browserTTSFallback('This is what I sound like at this speed.', speed);
     }
   } catch (e) {
-    showToast('Could not play voice — check your API key');
+    showToast('Could not play ElevenLabs voice — check API key and Voice ID');
     console.error(e);
   }
 }
@@ -3358,11 +3376,9 @@ function openSettings() {
   updateSystemPromptTokens();
   renderCustomModels();
   // Voice settings
-  document.getElementById('openaiKeyInput').value = state.openaiKey || '';
-  const voiceSel = document.getElementById('voiceSelect');
-  if (state.voiceName && [...voiceSel.options].some(o => o.value === state.voiceName)) {
-    voiceSel.value = state.voiceName;
-  }
+  document.getElementById('elevenLabsKeyInput').value = state.elevenLabsKey || '';
+  document.getElementById('elevenLabsVoiceIdInput').value = state.elevenLabsVoiceId || '';
+  document.getElementById('elevenLabsModelSelect').value = state.elevenLabsModel || 'eleven_multilingual_v2';
   setSlider('voiceSpeedSlider', 'voiceSpeedVal', state.voiceSpeed || 1.0);
   document.getElementById('settingsModal').classList.add('open');
 }
@@ -3523,9 +3539,11 @@ function saveSettings() {
     max_tokens: parseInt(document.getElementById('paramMaxTok').value),
   };
   state.customModels = [...document.querySelectorAll('#customModelsList input')].map(i => i.value.trim()).filter(v => v);
-  state.voiceName = document.getElementById('voiceSelect').value || 'nova';
+  state.voiceName = 'elevenlabs';
   state.voiceSpeed = parseFloat(document.getElementById('voiceSpeedSlider').value) || 1.0;
-  state.openaiKey = document.getElementById('openaiKeyInput').value.trim();
+  state.elevenLabsKey = document.getElementById('elevenLabsKeyInput').value.trim();
+  state.elevenLabsVoiceId = document.getElementById('elevenLabsVoiceIdInput').value.trim();
+  state.elevenLabsModel = document.getElementById('elevenLabsModelSelect').value || 'eleven_multilingual_v2';
   saveState();
   renderModelSelect();
   renderMessages();
@@ -3543,8 +3561,8 @@ function toggleSupabaseKeyVis() {
   i.type = i.type === 'password' ? 'text' : 'password';
 }
 
-function toggleOpenaiKeyVis() {
-  const i = document.getElementById('openaiKeyInput');
+function toggleElevenLabsKeyVis() {
+  const i = document.getElementById('elevenLabsKeyInput');
   i.type = i.type === 'password' ? 'text' : 'password';
 }
 
@@ -3918,7 +3936,7 @@ function exportAll() {
     contextMessages: state.contextMessages, maxMemories: state.maxMemories,
     summarizeAfter: state.summarizeAfter, welcomeAvatar: state.welcomeAvatar,
     params: state.params, customModels: state.customModels,
-    voiceName: state.voiceName, voiceSpeed: state.voiceSpeed, openaiKey: state.openaiKey,
+    voiceName: state.voiceName, voiceSpeed: state.voiceSpeed, elevenLabsKey: state.elevenLabsKey, elevenLabsVoiceId: state.elevenLabsVoiceId, elevenLabsModel: state.elevenLabsModel,
     memories: state.memories, chats: state.chats,
   };
   triggerDownload(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }), `velvet_dream_backup_${new Date().toISOString().slice(0, 10)}.json`);
@@ -3993,7 +4011,7 @@ function importAll(event) {
     try {
       const d = JSON.parse(e.target.result);
       if (!confirm(`Import backup from ${d.exportDate || '?'}? Replaces everything.`)) return;
-      ['apiKey', 'systemPrompt', 'userLabel', 'aiLabel', 'contextMessages', 'maxMemories', 'summarizeAfter', 'welcomeAvatar', 'customModels', 'voiceName', 'voiceSpeed', 'openaiKey', 'memories', 'chats'].forEach(k => {
+      ['apiKey', 'systemPrompt', 'userLabel', 'aiLabel', 'contextMessages', 'maxMemories', 'summarizeAfter', 'welcomeAvatar', 'customModels', 'voiceName', 'voiceSpeed', 'elevenLabsKey', 'elevenLabsVoiceId', 'elevenLabsModel', 'memories', 'chats'].forEach(k => {
         if (d[k] !== undefined) state[k] = d[k];
       });
       if (d.params) state.params = { ...state.params, ...d.params };

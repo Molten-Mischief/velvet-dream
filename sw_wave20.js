@@ -1,6 +1,6 @@
 // Velvet Dream Service Worker
 // Bump CACHE_VERSION when you push new code — forces all clients to refresh
-const CACHE_VERSION = 'v20';
+const CACHE_VERSION = 'v21';
 const CACHE_NAME = `velvet-dream-${CACHE_VERSION}`;
 
 const CORE_ASSETS = [
@@ -40,6 +40,7 @@ self.addEventListener('fetch', (event) => {
   // Skip API calls — never cache OpenRouter or other live calls
   if (url.hostname.includes('openrouter.ai') ||
       url.hostname.includes('openai.com') ||
+      url.hostname.includes('elevenlabs.io') ||
       url.hostname.includes('supabase.co')) {
     return;
   }
