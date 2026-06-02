@@ -1,11 +1,12 @@
 // Velvet Dream Service Worker
-// Bump CACHE_VERSION when you push new code — forces all clients to refresh
-const CACHE_VERSION = 'v23';
+// Stable-entry deploy: app always launches index.html. Wave files are snapshots only.
+// Bump CACHE_VERSION when you push new code so clients refresh.
+const CACHE_VERSION = 'v24-stable-entry';
 const CACHE_NAME = `velvet-dream-${CACHE_VERSION}`;
 
 const CORE_ASSETS = [
   './',
-
+  './index.html',
   './manifest.json',
   './icons/icon-192-dark.png',
   './icons/icon-512-dark.png',
@@ -14,15 +15,14 @@ const CORE_ASSETS = [
   './rabbit-dark.png'
 ];
 
-// Install: cache the core assets
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) => cache.addAll(CORE_ASSETS))
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.addAll(CORE_ASSETS))
       .then(() => self.skipWaiting())
   );
 });
 
-// Activate: clean up old caches
 self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches.keys().then((keys) => Promise.all(
@@ -31,12 +31,9 @@ self.addEventListener('activate', (event) => {
   );
 });
 
-// Fetch strategy: network-first for the HTML (so updates land fast),
-// cache-first for everything else (icons, fonts, etc.)
 self.addEventListener('fetch', (event) => {
   const url = new URL(event.request.url);
 
-  // Skip API calls — never cache OpenRouter or other live calls
   if (url.hostname.includes('openrouter.ai') ||
       url.hostname.includes('openai.com') ||
       url.hostname.includes('elevenlabs.io') ||
@@ -44,7 +41,6 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Network-first for HTML — update lands fast when online
   if (event.request.mode === 'navigate' || event.request.destination === 'document') {
     event.respondWith(
       fetch(event.request)
@@ -53,12 +49,11 @@ self.addEventListener('fetch', (event) => {
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
           return response;
         })
-        .catch(() => caches.match(event.request).then((m) => m || caches.match('./velvet_dream.html')))
+        .catch(() => caches.match(event.request).then((m) => m || caches.match('./index.html')))
     );
     return;
   }
 
-  // Cache-first for everything else
   event.respondWith(
     caches.match(event.request).then((cached) => {
       if (cached) return cached;

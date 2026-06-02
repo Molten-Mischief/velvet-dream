@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [ $# -lt 1 ]; then
+  echo "Usage: ./push-wave <wave-file.html> [commit message]"
+  exit 1
+fi
+
+WAVE_SOURCE="$1"
+COMMIT_MESSAGE="${2:-Push new Velvet Dream wave}"
+
+if [ ! -f "$WAVE_SOURCE" ]; then
+  if [ -f "$HOME/$WAVE_SOURCE" ]; then
+    WAVE_SOURCE="$HOME/$WAVE_SOURCE"
+  else
+    echo "Could not find wave file: $1"
+    exit 1
+  fi
+fi
+
+WAVE_NAME="$(basename "$WAVE_SOURCE")"
+cp "$WAVE_SOURCE" "./$WAVE_NAME"
+cp "$WAVE_SOURCE" ./index.html
+
+python3 - <<'PY'
+import json
+from pathlib import Path
+p = Path('manifest.json')
+data = json.loads(p.read_text())
+data['start_url'] = './index.html'
+data['scope'] = './'
+p.write_text(json.dumps(data, indent=2) + '\n')
+PY
+
+python3 - <<'PY'
+from pathlib import Path
+import re, time
+p = Path('sw.js')
+s = p.read_text()
+version = 'v' + time.strftime('%Y%m%d%H%M%S')
+s = re.sub(r"const CACHE_VERSION = ['\"][^'\"]+['\"];", f"const CACHE_VERSION = '{version}';", s)
+s = s.replace("caches.match('./velvet_dream.html')", "caches.match('./index.html')")
+if "const CORE_ASSETS = [" in s:
+    block = s.split("const CORE_ASSETS = [", 1)[1].split("];", 1)[0]
+    if "./index.html" not in block:
+        s = s.replace("  './',\n", "  './',\n  './index.html',\n", 1)
+p.write_text(s)
+PY
+
+git add "$WAVE_NAME" index.html manifest.json sw.js
+git commit -m "$COMMIT_MESSAGE"
+git push
