@@ -1435,21 +1435,153 @@ function memoryAgeLabel(card) {
   return `${yr} year${yr === 1 ? '' : 's'} ago`;
 }
 
-// Old keyword-matching retrieval. Kept as fallback when semantic search is unavailable
-// (no API key, no Supabase, or offline). Pure semantic is the primary path.
-function getRelevantMemoriesByKeyword(msg) {
-  const norm = t => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-  const mn = norm(msg);
-  const pinned = [];
-  const matched = [];
+// Keyword-backed retrieval. Keywords are the controlled candidate signal;
+// semantic search then ranks/supports those candidates and fills gaps.
+const BROAD_MEMORY_KEYWORDS = new Set([
+  'intimate', 'intimacy', 'affection', 'affectionate', 'comfort', 'comforting',
+  'vulnerable', 'vulnerability', 'tender', 'playful', 'flirty', 'sad', 'anxious',
+  'fear', 'hurt', 'lonely', 'reassurance', 'connection', 'closeness', 'romantic',
+  'emotional'
+]);
+
+const QUERY_STOPWORDS = new Set([
+  'the', 'a', 'an', 'and', 'or', 'but', 'with', 'to', 'of', 'for', 'in', 'on',
+  'about', 'from', 'into', 'this', 'that', 'these', 'those', 'my', 'your', 'our',
+  'their', 'me', 'you', 'we', 'it', 'is', 'are', 'was', 'were', 'be', 'been',
+  'being', 'do', 'does', 'did', 'have', 'has', 'had', 'what', 'when', 'where',
+  'why', 'how', 'can', 'could', 'would', 'should', 'combined'
+]);
+
+function normalizeMemoryText(t) {
+  return String(t || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[’']/g, '')
+    .trim();
+}
+
+function normalizeKeyword(kw) {
+  return normalizeMemoryText(kw)
+    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function normalizeKeywordList(keywords, limit = 8) {
+  if (!Array.isArray(keywords)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const raw of keywords) {
+    if (typeof raw !== 'string') continue;
+    const kw = normalizeKeyword(raw).slice(0, 50);
+    if (!kw || seen.has(kw)) continue;
+    seen.add(kw);
+    out.push(kw);
+    if (out.length >= limit) break;
+  }
+  return out;
+}
+
+function keywordAppearsInMessage(keyword, msgNorm) {
+  if (!keyword) return false;
+  if (keyword.includes(' ')) return msgNorm.includes(keyword);
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}([^\\p{L}\\p{N}]|$)`, 'u').test(msgNorm);
+}
+
+function getKeywordEvidence(msg) {
+  const msgNorm = normalizeMemoryText(msg);
+  const evidence = new Map();
+
   state.memories.forEach(mem => {
-    if (mem.pinned) { pinned.push(mem); return; }
     if (mem.enabled === false) return;
-    const kws = (mem.keywords || []).map(norm);
-    if (kws.some(kw => kw && mn.includes(kw))) matched.push(mem);
+    if (mem.pinned) return;
+
+    const kws = normalizeKeywordList(mem.keywords || []);
+    let specificHits = 0;
+    let broadHits = 0;
+    const hits = [];
+
+    kws.forEach(kw => {
+      if (!keywordAppearsInMessage(kw, msgNorm)) return;
+      hits.push(kw);
+      if (BROAD_MEMORY_KEYWORDS.has(kw)) broadHits++;
+      else specificHits++;
+    });
+
+    if (!hits.length) return;
+
+    evidence.set(mem.id, {
+      card: mem,
+      hits,
+      specificHits,
+      broadHits,
+      keywordScore: specificHits * 3 + broadHits,
+      needsSemanticSupport: specificHits === 0
+    });
   });
-  matched.sort((a, b) => (PRIORITY_ORDER[a.priority || 'medium'] || 1) - (PRIORITY_ORDER[b.priority || 'medium'] || 1));
+
+  return evidence;
+}
+
+function extractTopicQueries(msg) {
+  const norm = normalizeMemoryText(msg)
+    .replace(/[?!.:,;]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!norm) return [];
+
+  const splitReady = norm
+    .replace(/\bcombined with\b/g, '|')
+    .replace(/\brelated to\b/g, '|')
+    .replace(/\bas well as\b/g, '|')
+    .replace(/\balong with\b/g, '|')
+    .replace(/\bplus\b/g, '|')
+    .replace(/\balso\b/g, '|')
+    .replace(/\band\b/g, '|')
+    .replace(/\bor\b/g, '|')
+    .replace(/[&/,+]/g, '|');
+
+  const chunks = splitReady.split('|').map(s => s.trim()).filter(Boolean);
+  const topicQueries = [];
+
+  chunks.forEach(chunk => {
+    const words = chunk
+      .split(/\s+/)
+      .filter(w => w.length >= 2)
+      .filter(w => !QUERY_STOPWORDS.has(w));
+
+    const cleaned = words.join(' ').trim();
+    if (cleaned.length >= 3) topicQueries.push(cleaned);
+
+    // Preserve strong anchors as separate semantic probes.
+    words.forEach(w => {
+      if (/[0-9]/.test(w) || w.length >= 4) topicQueries.push(w);
+    });
+  });
+
+  return [...new Set(topicQueries)].slice(0, 8);
+}
+
+// Fallback only: used when semantic retrieval cannot run. Broad-only keyword hits
+// are excluded here because there is no semantic layer available to verify them.
+function getRelevantMemoriesByKeyword(msg) {
   const max = state.maxMemories || 3;
+  const pinned = state.memories.filter(m => m.pinned && m.enabled !== false);
+  const evidence = getKeywordEvidence(msg);
+
+  const matched = [...evidence.values()]
+    .filter(ev => !ev.needsSemanticSupport)
+    .sort((a, b) => {
+      if (b.specificHits !== a.specificHits) return b.specificHits - a.specificHits;
+      if (b.keywordScore !== a.keywordScore) return b.keywordScore - a.keywordScore;
+      const ap = PRIORITY_ORDER[a.card.priority || 'medium'] || 1;
+      const bp = PRIORITY_ORDER[b.card.priority || 'medium'] || 1;
+      return ap - bp;
+    })
+    .map(ev => ev.card);
+
   const rem = Math.max(0, max - pinned.length);
   return [...pinned, ...matched.slice(0, rem)];
 }
@@ -1708,6 +1840,99 @@ If only one card is appropriate, the array has one object. If the source contain
   return validated;
 }
 
+// Generate keywords for an already-written card without rewriting the card itself.
+// Uses the same keyword wording as the unified memory extractor.
+async function generateKeywordsForMemoryCard(name, content) {
+  if (!state.apiKey) return [];
+  const aiName = state.aiLabel || 'Kai';
+  const userName = state.userLabel || 'the user';
+  const prompt = `The following is an already-written memory card for ${userName} and ${aiName}. Generate only the keywords field for it. Do not rewrite the name or content.
+
+Memory card:
+name: ${name || 'Untitled'}
+content: ${content || ''}
+
+keywords — Array of 3-5 short lowercase keywords or short phrases (1-3 words each) that someone might use to bring this memory up later. Specific nouns, names, topics. Not generic words.
+
+Return ONLY a JSON object, no markdown fences, no preamble:
+{"keywords": ["word", "phrase", "topic"]}`;
+
+  const chat = getActiveChat();
+  const model = chat?.model || DEFAULT_MODELS[0].id;
+
+  let resp;
+  try {
+    resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${state.apiKey}`,
+        'HTTP-Referer': 'https://kai.app',
+        'X-Title': 'Kai Memory Keywords'
+      },
+      body: JSON.stringify({
+        model,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_tokens: 500,
+        response_format: { type: 'json_object' }
+      })
+    });
+  } catch (e) {
+    console.warn('Keyword generation network error:', e);
+    return [];
+  }
+
+  if (!resp.ok) {
+    console.warn('Keyword generation HTTP error:', resp.status);
+    return [];
+  }
+
+  const data = await resp.json();
+  let raw = (data.choices?.[0]?.message?.content || '').trim();
+  raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    console.warn('Keyword generation JSON parse failed:', e);
+    return [];
+  }
+
+  const keywords = Array.isArray(parsed?.keywords)
+    ? parsed.keywords
+    : (Array.isArray(parsed) ? parsed : []);
+
+  return normalizeKeywordList(keywords, 5);
+}
+
+async function ensureMemoryCardKeywords(card, previousKeywordHash = '') {
+  if (!card) return card;
+  const keywordBody = `${card.name || 'Untitled'}\n\n${card.content || ''}`;
+  const keywordHash = contentHash(keywordBody);
+  const hasKeywords = Array.isArray(card.keywords) && card.keywords.length > 0;
+
+  // If the name/content did not change and the card already has keywords, keep them.
+  if (hasKeywords && previousKeywordHash && previousKeywordHash === keywordHash) {
+    card.keywords = normalizeKeywordList(card.keywords, 8);
+    card.keywordHash = keywordHash;
+    return card;
+  }
+
+  const generated = await generateKeywordsForMemoryCard(card.name, card.content);
+  if (generated.length) {
+    card.keywords = generated;
+    card.keywordHash = keywordHash;
+  } else if (hasKeywords) {
+    card.keywords = normalizeKeywordList(card.keywords, 8);
+    card.keywordHash = keywordHash;
+  } else {
+    card.keywords = [];
+  }
+  return card;
+}
+
 // Consolidator: when extractMemoryCards returns 2+ cards, check whether any of
 // them name the same domain and merge those into one card. Mirrors the thread
 // merge rule from the updater. Returns the (possibly shorter) array.
@@ -1925,17 +2150,13 @@ async function generateSummaryForEditor() {
   }
 }
 
-// Semantic retrieval. Embeds the query four times (one per dimension), then asks Supabase
-// to find cards matching on any dimension. The RPC returns the best similarity per card
-// across all dimensions. Resolves card IDs back to full card objects from state.memories.
-async function getRelevantMemoriesBySemantics(msg) {
+// Semantic retrieval helper. Embeds one query four times (one per dimension), then asks
+// Supabase to find cards matching on any dimension. The RPC returns the best similarity
+// per card across all dimensions.
+async function getSemanticRowsForQuery(query) {
   if (!supabase || !currentUser || !state.apiKey) return null;
   const threshold = state.semanticThreshold ?? 0.4;
-  const max = state.maxMemories || 3;
 
-  // Embed the query four times with the same prefixes used at storage time.
-  // This is what makes cross-dimensional retrieval work — a query about an emotionally
-  // heavy moment matches against the emotional embeddings, not just topical ones.
   const prefixes = {
     content: 'Topic and factual content of this memory: ',
     emotional: 'Emotional tone and feeling of this memory: ',
@@ -1945,14 +2166,13 @@ async function getRelevantMemoriesBySemantics(msg) {
 
   const queryEmbeddings = {};
   for (const [dim, prefix] of Object.entries(prefixes)) {
-    const vec = await embedText(prefix + msg);
+    const vec = await embedText(prefix + query);
     if (!vec) {
       const reason = `Query embedding failed for dimension ${dim}`;
       console.warn(reason);
       showToast(reason);
       return null;
     }
-    // pgvector requires the vector as a string in '[n,n,n]' format, not a raw JS array.
     queryEmbeddings[`query_${dim}`] = '[' + vec.join(',') + ']';
   }
 
@@ -1962,9 +2182,9 @@ async function getRelevantMemoriesBySemantics(msg) {
       match_threshold: threshold,
       match_count: 20
     });
+
     if (error) {
       console.warn('Multi-dim match failed, will retry single-dim:', error);
-      // Fallback: try the legacy RPC if the new one isn't installed yet
       const { data: legacyData, error: legacyError } = await supabase.rpc('match_memories', {
         query_embedding: queryEmbeddings.query_content,
         match_threshold: threshold,
@@ -1974,40 +2194,144 @@ async function getRelevantMemoriesBySemantics(msg) {
         console.warn('Legacy match also failed:', legacyError);
         return null;
       }
-      return resolveMatchedCards(legacyData || [], max);
+      return legacyData || [];
     }
-    return resolveMatchedCards(data || [], max);
+
+    return data || [];
   } catch (e) {
     console.warn('Semantic retrieval error:', e);
     return null;
   }
 }
 
-// Take matched rows from the RPC and resolve them to full card objects.
-// Pinned cards always lead. Disabled cards are filtered out.
-function resolveMatchedCards(rows, max) {
-  const pinned = state.memories.filter(m => m.pinned);
-  const pinnedIds = new Set(pinned.map(m => m.id));
+async function getRelevantMemoriesBySemantics(msg) {
+  if (!supabase || !currentUser || !state.apiKey) return null;
 
-  const matched = rows
-    .filter(row => !pinnedIds.has(row.card_id))
-    .map(row => {
-      const card = state.memories.find(m => m.id === row.card_id);
-      if (!card) return null;
-      if (card.enabled === false) return null;
-      return { ...card, _similarity: row.similarity };
-    })
-    .filter(Boolean);
+  const merged = new Map();
 
-  const rem = Math.max(0, max - pinned.length);
-  return [...pinned, ...matched.slice(0, rem)];
+  async function mergeRowsForQuery(query) {
+    const rows = await getSemanticRowsForQuery(query);
+    if (rows === null) return null;
+
+    rows.forEach(row => {
+      const cardId = row.card_id;
+      if (!cardId) return;
+
+      const similarity = Number(row.similarity || 0);
+      const previous = merged.get(cardId);
+
+      if (!previous || similarity > previous.similarity) {
+        merged.set(cardId, {
+          ...row,
+          similarity,
+          _semanticQueries: [query]
+        });
+      } else if (previous && !previous._semanticQueries.includes(query)) {
+        previous._semanticQueries.push(query);
+      }
+    });
+
+    return rows;
+  }
+
+  const topicQueries = extractTopicQueries(msg);
+
+  // Topic-level semantic comes first. The full blended message is only a fallback.
+  for (const query of topicQueries) {
+    const rows = await mergeRowsForQuery(query);
+    if (rows === null) return null;
+  }
+
+  // Whole-message semantic is last resort: only use it if topic slices found nothing,
+  // or if no usable topic slices could be produced.
+  if (merged.size === 0) {
+    const rows = await mergeRowsForQuery(msg);
+    if (rows === null) return null;
+  }
+
+  return [...merged.values()]
+    .sort((a, b) => Number(b.similarity || 0) - Number(a.similarity || 0));
 }
 
-// Public entry point: try semantic, fall back to keyword if unavailable.
+function resolveRankedMemoryResults(keywordEvidence, semanticRows) {
+  const max = state.maxMemories || 3;
+  const pinned = state.memories.filter(m => m.pinned && m.enabled !== false);
+  const pinnedIds = new Set(pinned.map(m => m.id));
+  const ranked = new Map();
+
+  // Keyword evidence is gathered first and only comes from mem.keywords.
+  keywordEvidence.forEach((ev, cardId) => {
+    if (pinnedIds.has(cardId)) return;
+    ranked.set(cardId, {
+      card: ev.card,
+      keywordHits: ev.hits,
+      keywordScore: ev.keywordScore,
+      specificHits: ev.specificHits,
+      broadHits: ev.broadHits,
+      needsSemanticSupport: ev.needsSemanticSupport,
+      semanticScore: 0,
+      semanticQueries: []
+    });
+  });
+
+  // Semantic evidence is topic-first. Whole-message evidence only appears if topic search failed.
+  semanticRows.forEach(row => {
+    const card = state.memories.find(m => m.id === row.card_id);
+    if (!card) return;
+    if (card.enabled === false) return;
+    if (pinnedIds.has(card.id)) return;
+
+    const existing = ranked.get(card.id) || {
+      card,
+      keywordHits: [],
+      keywordScore: 0,
+      specificHits: 0,
+      broadHits: 0,
+      needsSemanticSupport: false,
+      semanticScore: 0,
+      semanticQueries: []
+    };
+
+    existing.semanticScore = Math.max(existing.semanticScore, Number(row.similarity || 0));
+    existing.semanticQueries = row._semanticQueries || [];
+    ranked.set(card.id, existing);
+  });
+
+  const results = [...ranked.values()]
+    .filter(item => {
+      // Broad-only keyword hits like "intimate" need semantic confirmation.
+      if (item.needsSemanticSupport && item.semanticScore <= 0) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      if (b.specificHits !== a.specificHits) return b.specificHits - a.specificHits;
+      const aCombined = a.keywordScore + a.semanticScore;
+      const bCombined = b.keywordScore + b.semanticScore;
+      if (bCombined !== aCombined) return bCombined - aCombined;
+      const ap = PRIORITY_ORDER[a.card.priority || 'medium'] || 1;
+      const bp = PRIORITY_ORDER[b.card.priority || 'medium'] || 1;
+      return ap - bp;
+    })
+    .map(item => ({
+      ...item.card,
+      _similarity: item.semanticScore,
+      _keywordHits: item.keywordHits,
+      _semanticQueries: item.semanticQueries
+    }));
+
+  const rem = Math.max(0, max - pinned.length);
+  return [...pinned, ...results.slice(0, rem)];
+}
+
 async function getRelevantMemories(msg) {
-  const semantic = await getRelevantMemoriesBySemantics(msg);
-  if (semantic !== null) return semantic;
-  return getRelevantMemoriesByKeyword(msg);
+  const keywordEvidence = getKeywordEvidence(msg);
+  const semanticRows = await getRelevantMemoriesBySemantics(msg);
+
+  if (semanticRows === null) {
+    return getRelevantMemoriesByKeyword(msg);
+  }
+
+  return resolveRankedMemoryResults(keywordEvidence, semanticRows);
 }
 
 // One-time backfill: ensure every card has multi-dimensional embeddings.
@@ -4028,28 +4352,50 @@ function closeMemoryEditor() {
 async function saveMemory() {
   const name = document.getElementById('memNameInput').value.trim();
   if (!name) { showToast('Give it a name'); return; }
+
+  const content = document.getElementById('memContentInput').value;
   const data = {
     name,
-    content: document.getElementById('memContentInput').value,
+    content,
     enabled: document.getElementById('memAlwaysLoad').checked,
     pinned: document.getElementById('memPinned').checked,
     updatedAt: Date.now(),
   };
+
   let card;
+  let previousKeywordHash = '';
+
   if (editingMemoryId) {
     card = state.memories.find(x => x.id === editingMemoryId);
-    if (card) Object.assign(card, data);
+    if (card) {
+      previousKeywordHash = card.keywordHash || contentHash(`${card.name || 'Untitled'}\n\n${card.content || ''}`);
+      Object.assign(card, data);
+    }
   } else {
-    card = { id: 'mem_' + Date.now(), ...data, capturedAt: Date.now(), createdAt: Date.now() };
+    card = {
+      id: 'mem_' + Date.now(),
+      ...data,
+      keywords: [],
+      capturedAt: Date.now(),
+      createdAt: Date.now()
+    };
     state.memories.push(card);
   }
+
+  if (!card) { showToast('Memory not found'); return; }
+
+  // Ensure manual +New/edit cards have the same kind of 3-5 keyword anchors
+  // that extracted/imported memory cards already receive.
+  await ensureMemoryCardKeywords(card, previousKeywordHash);
+
   saveState();
   pendingMemoryDraft = null;
   closeMemoryEditor();
   renderMemoryCards();
   showToast('Memory saved', false);
-  // Embed in background — full content goes through four-dimensional embedding
-  if (card) embedAndStoreCard(card).catch(e => console.warn('Embed on save failed:', e));
+
+  // Embed in background — full content goes through four-dimensional embedding.
+  embedAndStoreCard(card).catch(e => console.warn('Embed on save failed:', e));
 }
 
 function deleteMemory(id) {
