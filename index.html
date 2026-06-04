@@ -235,7 +235,6 @@ html, body {
 }
 .header-left { display: flex; align-items: center; gap: 12px; }
 .header-title { font-family: 'Libre Baskerville', serif; font-size: 18px; font-weight: 400; color: var(--text-primary); letter-spacing: 0.04em; }
-.header-wave { font-size: 11px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; letter-spacing: 0.03em; }
 .header-right { display: flex; gap: 4px; }
 .header-btn {
   background: none; border: 1px solid var(--border); color: var(--text-secondary);
@@ -563,7 +562,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream</div><div class="header-wave">Wave 27</div>
+      <div class="header-title">Velvet Dream</div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -808,7 +807,7 @@ html, body {
       <div class="collapsible-section collapsed" id="memMigrateSection">
         <div style="padding-top:12px">
           <div class="hint" style="margin-bottom:10px">Re-extract existing cards into the new Title + Context format and rebuild multi-dimensional embeddings. Runs once. Existing card IDs and pin/enabled flags are preserved.</div>
-          <button class="action-btn" style="width:100%" onclick="migrateExistingCards()">Fill missing keywords / verify vectors</button>
+          <button class="action-btn" style="width:100%" onclick="migrateExistingCards()">Migrate all cards now</button>
         </div>
       </div>
       <div class="section-divider" onclick="toggleSection('memExportSection',this)" style="margin-top:8px"><span class="toggle-arrow collapsed">▼</span> Export Memory Cards</div>
@@ -1436,153 +1435,21 @@ function memoryAgeLabel(card) {
   return `${yr} year${yr === 1 ? '' : 's'} ago`;
 }
 
-// Keyword-backed retrieval. Keywords are the controlled candidate signal;
-// semantic search then ranks/supports those candidates and fills gaps.
-const BROAD_MEMORY_KEYWORDS = new Set([
-  'intimate', 'intimacy', 'affection', 'affectionate', 'comfort', 'comforting',
-  'vulnerable', 'vulnerability', 'tender', 'playful', 'flirty', 'sad', 'anxious',
-  'fear', 'hurt', 'lonely', 'reassurance', 'connection', 'closeness', 'romantic',
-  'emotional'
-]);
-
-const QUERY_STOPWORDS = new Set([
-  'the', 'a', 'an', 'and', 'or', 'but', 'with', 'to', 'of', 'for', 'in', 'on',
-  'about', 'from', 'into', 'this', 'that', 'these', 'those', 'my', 'your', 'our',
-  'their', 'me', 'you', 'we', 'it', 'is', 'are', 'was', 'were', 'be', 'been',
-  'being', 'do', 'does', 'did', 'have', 'has', 'had', 'what', 'when', 'where',
-  'why', 'how', 'can', 'could', 'would', 'should', 'combined'
-]);
-
-function normalizeMemoryText(t) {
-  return String(t || '')
-    .toLowerCase()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[’']/g, '')
-    .trim();
-}
-
-function normalizeKeyword(kw) {
-  return normalizeMemoryText(kw)
-    .replace(/[^\p{L}\p{N}\s-]/gu, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-
-function normalizeKeywordList(keywords, limit = 8) {
-  if (!Array.isArray(keywords)) return [];
-  const seen = new Set();
-  const out = [];
-  for (const raw of keywords) {
-    if (typeof raw !== 'string') continue;
-    const kw = normalizeKeyword(raw).slice(0, 50);
-    if (!kw || seen.has(kw)) continue;
-    seen.add(kw);
-    out.push(kw);
-    if (out.length >= limit) break;
-  }
-  return out;
-}
-
-function keywordAppearsInMessage(keyword, msgNorm) {
-  if (!keyword) return false;
-  if (keyword.includes(' ')) return msgNorm.includes(keyword);
-  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}([^\\p{L}\\p{N}]|$)`, 'u').test(msgNorm);
-}
-
-function getKeywordEvidence(msg) {
-  const msgNorm = normalizeMemoryText(msg);
-  const evidence = new Map();
-
-  state.memories.forEach(mem => {
-    if (mem.enabled === false) return;
-    if (mem.pinned) return;
-
-    const kws = normalizeKeywordList(mem.keywords || []);
-    let specificHits = 0;
-    let broadHits = 0;
-    const hits = [];
-
-    kws.forEach(kw => {
-      if (!keywordAppearsInMessage(kw, msgNorm)) return;
-      hits.push(kw);
-      if (BROAD_MEMORY_KEYWORDS.has(kw)) broadHits++;
-      else specificHits++;
-    });
-
-    if (!hits.length) return;
-
-    evidence.set(mem.id, {
-      card: mem,
-      hits,
-      specificHits,
-      broadHits,
-      keywordScore: specificHits * 3 + broadHits,
-      needsSemanticSupport: specificHits === 0
-    });
-  });
-
-  return evidence;
-}
-
-function extractTopicQueries(msg) {
-  const norm = normalizeMemoryText(msg)
-    .replace(/[?!.:,;]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-  if (!norm) return [];
-
-  const splitReady = norm
-    .replace(/\bcombined with\b/g, '|')
-    .replace(/\brelated to\b/g, '|')
-    .replace(/\bas well as\b/g, '|')
-    .replace(/\balong with\b/g, '|')
-    .replace(/\bplus\b/g, '|')
-    .replace(/\balso\b/g, '|')
-    .replace(/\band\b/g, '|')
-    .replace(/\bor\b/g, '|')
-    .replace(/[&/,+]/g, '|');
-
-  const chunks = splitReady.split('|').map(s => s.trim()).filter(Boolean);
-  const topicQueries = [];
-
-  chunks.forEach(chunk => {
-    const words = chunk
-      .split(/\s+/)
-      .filter(w => w.length >= 2)
-      .filter(w => !QUERY_STOPWORDS.has(w));
-
-    const cleaned = words.join(' ').trim();
-    if (cleaned.length >= 3) topicQueries.push(cleaned);
-
-    // Preserve strong anchors as separate semantic probes.
-    words.forEach(w => {
-      if (/[0-9]/.test(w) || w.length >= 4) topicQueries.push(w);
-    });
-  });
-
-  return [...new Set(topicQueries)].slice(0, 8);
-}
-
-// Fallback only: used when semantic retrieval cannot run. Broad-only keyword hits
-// are excluded here because there is no semantic layer available to verify them.
+// Old keyword-matching retrieval. Kept as fallback when semantic search is unavailable
+// (no API key, no Supabase, or offline). Pure semantic is the primary path.
 function getRelevantMemoriesByKeyword(msg) {
+  const norm = t => t.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const mn = norm(msg);
+  const pinned = [];
+  const matched = [];
+  state.memories.forEach(mem => {
+    if (mem.pinned) { pinned.push(mem); return; }
+    if (mem.enabled === false) return;
+    const kws = (mem.keywords || []).map(norm);
+    if (kws.some(kw => kw && mn.includes(kw))) matched.push(mem);
+  });
+  matched.sort((a, b) => (PRIORITY_ORDER[a.priority || 'medium'] || 1) - (PRIORITY_ORDER[b.priority || 'medium'] || 1));
   const max = state.maxMemories || 3;
-  const pinned = state.memories.filter(m => m.pinned && m.enabled !== false);
-  const evidence = getKeywordEvidence(msg);
-
-  const matched = [...evidence.values()]
-    .filter(ev => !ev.needsSemanticSupport)
-    .sort((a, b) => {
-      if (b.specificHits !== a.specificHits) return b.specificHits - a.specificHits;
-      if (b.keywordScore !== a.keywordScore) return b.keywordScore - a.keywordScore;
-      const ap = PRIORITY_ORDER[a.card.priority || 'medium'] || 1;
-      const bp = PRIORITY_ORDER[b.card.priority || 'medium'] || 1;
-      return ap - bp;
-    })
-    .map(ev => ev.card);
-
   const rem = Math.max(0, max - pinned.length);
   return [...pinned, ...matched.slice(0, rem)];
 }
@@ -1704,7 +1571,7 @@ async function embedAndStoreCard(card) {
 // UNIFIED MEMORY EXTRACTION
 // Single function for all memory creation paths: capture button, auto-capture, MD upload,
 // paste, manual create. Takes raw input text and produces one or more cards in the
-// Title + Context format. Returns array of { name, content, keywords } objects.
+// Title + Context format. Returns array of { name, content } objects.
 //
 // inputType controls how the extraction prompt frames the source:
 //   'conversation'  → conversation window with role markers
@@ -1839,77 +1706,6 @@ If only one card is appropriate, the array has one object. If the source contain
   }
 
   return validated;
-}
-
-// Keyword-only helper for manual cards and safe backfill.
-// Uses the same keyword wording as the unified extractor, but preserves the
-// existing card name/content exactly and returns only keywords.
-async function generateMemoryKeywords(name, content) {
-  if (!state.apiKey) return [];
-
-  const prompt = `Create keywords for this existing memory card.
-
-Keep the memory card name and content exactly as they are. Do not rewrite, summarize, correct, or reformat them. Return only keywords.
-
-Memory card:
-Name: ${name || 'Untitled'}
-Content:
-${content || ''}
-
-keywords — Array of 3-5 short lowercase keywords or short phrases (1-3 words each) that someone might use to bring this memory up later. Specific nouns, names, topics. Not generic words.
-
-Return ONLY a JSON object with this exact shape, no markdown fences, no preamble:
-{"keywords": ["word", "phrase", "topic"]}`;
-
-  const chat = getActiveChat();
-  const model = chat?.model || DEFAULT_MODELS[0].id;
-
-  let resp;
-  try {
-    resp = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        Authorization: `Bearer ${state.apiKey}`,
-        'HTTP-Referer': 'https://kai.app',
-        'X-Title': 'Kai Memory Keywords'
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        temperature: 0.2,
-        max_tokens: 300,
-        response_format: { type: 'json_object' }
-      })
-    });
-  } catch (e) {
-    console.warn('Keyword generation network error:', e);
-    return [];
-  }
-
-  if (!resp.ok) {
-    const bodyText = await resp.text().catch(() => '');
-    console.warn('Keyword generation failed:', resp.status, bodyText);
-    return [];
-  }
-
-  const data = await resp.json();
-  let raw = (data.choices?.[0]?.message?.content || '').trim();
-  raw = raw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
-
-  let parsed;
-  try {
-    parsed = JSON.parse(raw);
-  } catch (e) {
-    console.warn('Keyword generation JSON parse failed:', e, raw.slice(0, 100));
-    return [];
-  }
-
-  const keywords = Array.isArray(parsed?.keywords) ? parsed.keywords : [];
-  return keywords
-    .filter(k => typeof k === 'string' && k.trim())
-    .map(k => k.toLowerCase().trim().slice(0, 50))
-    .slice(0, 8);
 }
 
 // Consolidator: when extractMemoryCards returns 2+ cards, check whether any of
@@ -2129,13 +1925,17 @@ async function generateSummaryForEditor() {
   }
 }
 
-// Semantic retrieval helper. Embeds one query four times (one per dimension), then asks
-// Supabase to find cards matching on any dimension. The RPC returns the best similarity
-// per card across all dimensions.
-async function getSemanticRowsForQuery(query) {
+// Semantic retrieval. Embeds the query four times (one per dimension), then asks Supabase
+// to find cards matching on any dimension. The RPC returns the best similarity per card
+// across all dimensions. Resolves card IDs back to full card objects from state.memories.
+async function getRelevantMemoriesBySemantics(msg) {
   if (!supabase || !currentUser || !state.apiKey) return null;
   const threshold = state.semanticThreshold ?? 0.4;
+  const max = state.maxMemories || 3;
 
+  // Embed the query four times with the same prefixes used at storage time.
+  // This is what makes cross-dimensional retrieval work — a query about an emotionally
+  // heavy moment matches against the emotional embeddings, not just topical ones.
   const prefixes = {
     content: 'Topic and factual content of this memory: ',
     emotional: 'Emotional tone and feeling of this memory: ',
@@ -2145,13 +1945,14 @@ async function getSemanticRowsForQuery(query) {
 
   const queryEmbeddings = {};
   for (const [dim, prefix] of Object.entries(prefixes)) {
-    const vec = await embedText(prefix + query);
+    const vec = await embedText(prefix + msg);
     if (!vec) {
       const reason = `Query embedding failed for dimension ${dim}`;
       console.warn(reason);
       showToast(reason);
       return null;
     }
+    // pgvector requires the vector as a string in '[n,n,n]' format, not a raw JS array.
     queryEmbeddings[`query_${dim}`] = '[' + vec.join(',') + ']';
   }
 
@@ -2161,9 +1962,9 @@ async function getSemanticRowsForQuery(query) {
       match_threshold: threshold,
       match_count: 20
     });
-
     if (error) {
       console.warn('Multi-dim match failed, will retry single-dim:', error);
+      // Fallback: try the legacy RPC if the new one isn't installed yet
       const { data: legacyData, error: legacyError } = await supabase.rpc('match_memories', {
         query_embedding: queryEmbeddings.query_content,
         match_threshold: threshold,
@@ -2173,144 +1974,40 @@ async function getSemanticRowsForQuery(query) {
         console.warn('Legacy match also failed:', legacyError);
         return null;
       }
-      return legacyData || [];
+      return resolveMatchedCards(legacyData || [], max);
     }
-
-    return data || [];
+    return resolveMatchedCards(data || [], max);
   } catch (e) {
     console.warn('Semantic retrieval error:', e);
     return null;
   }
 }
 
-async function getRelevantMemoriesBySemantics(msg) {
-  if (!supabase || !currentUser || !state.apiKey) return null;
-
-  const merged = new Map();
-
-  async function mergeRowsForQuery(query) {
-    const rows = await getSemanticRowsForQuery(query);
-    if (rows === null) return null;
-
-    rows.forEach(row => {
-      const cardId = row.card_id;
-      if (!cardId) return;
-
-      const similarity = Number(row.similarity || 0);
-      const previous = merged.get(cardId);
-
-      if (!previous || similarity > previous.similarity) {
-        merged.set(cardId, {
-          ...row,
-          similarity,
-          _semanticQueries: [query]
-        });
-      } else if (previous && !previous._semanticQueries.includes(query)) {
-        previous._semanticQueries.push(query);
-      }
-    });
-
-    return rows;
-  }
-
-  const topicQueries = extractTopicQueries(msg);
-
-  // Topic-level semantic comes first. The full blended message is only a fallback.
-  for (const query of topicQueries) {
-    const rows = await mergeRowsForQuery(query);
-    if (rows === null) return null;
-  }
-
-  // Whole-message semantic is last resort: only use it if topic slices found nothing,
-  // or if no usable topic slices could be produced.
-  if (merged.size === 0) {
-    const rows = await mergeRowsForQuery(msg);
-    if (rows === null) return null;
-  }
-
-  return [...merged.values()]
-    .sort((a, b) => Number(b.similarity || 0) - Number(a.similarity || 0));
-}
-
-function resolveRankedMemoryResults(keywordEvidence, semanticRows) {
-  const max = state.maxMemories || 3;
-  const pinned = state.memories.filter(m => m.pinned && m.enabled !== false);
+// Take matched rows from the RPC and resolve them to full card objects.
+// Pinned cards always lead. Disabled cards are filtered out.
+function resolveMatchedCards(rows, max) {
+  const pinned = state.memories.filter(m => m.pinned);
   const pinnedIds = new Set(pinned.map(m => m.id));
-  const ranked = new Map();
 
-  // Keyword evidence is gathered first and only comes from mem.keywords.
-  keywordEvidence.forEach((ev, cardId) => {
-    if (pinnedIds.has(cardId)) return;
-    ranked.set(cardId, {
-      card: ev.card,
-      keywordHits: ev.hits,
-      keywordScore: ev.keywordScore,
-      specificHits: ev.specificHits,
-      broadHits: ev.broadHits,
-      needsSemanticSupport: ev.needsSemanticSupport,
-      semanticScore: 0,
-      semanticQueries: []
-    });
-  });
-
-  // Semantic evidence is topic-first. Whole-message evidence only appears if topic search failed.
-  semanticRows.forEach(row => {
-    const card = state.memories.find(m => m.id === row.card_id);
-    if (!card) return;
-    if (card.enabled === false) return;
-    if (pinnedIds.has(card.id)) return;
-
-    const existing = ranked.get(card.id) || {
-      card,
-      keywordHits: [],
-      keywordScore: 0,
-      specificHits: 0,
-      broadHits: 0,
-      needsSemanticSupport: false,
-      semanticScore: 0,
-      semanticQueries: []
-    };
-
-    existing.semanticScore = Math.max(existing.semanticScore, Number(row.similarity || 0));
-    existing.semanticQueries = row._semanticQueries || [];
-    ranked.set(card.id, existing);
-  });
-
-  const results = [...ranked.values()]
-    .filter(item => {
-      // Broad-only keyword hits like "intimate" need semantic confirmation.
-      if (item.needsSemanticSupport && item.semanticScore <= 0) return false;
-      return true;
+  const matched = rows
+    .filter(row => !pinnedIds.has(row.card_id))
+    .map(row => {
+      const card = state.memories.find(m => m.id === row.card_id);
+      if (!card) return null;
+      if (card.enabled === false) return null;
+      return { ...card, _similarity: row.similarity };
     })
-    .sort((a, b) => {
-      if (b.specificHits !== a.specificHits) return b.specificHits - a.specificHits;
-      const aCombined = a.keywordScore + a.semanticScore;
-      const bCombined = b.keywordScore + b.semanticScore;
-      if (bCombined !== aCombined) return bCombined - aCombined;
-      const ap = PRIORITY_ORDER[a.card.priority || 'medium'] || 1;
-      const bp = PRIORITY_ORDER[b.card.priority || 'medium'] || 1;
-      return ap - bp;
-    })
-    .map(item => ({
-      ...item.card,
-      _similarity: item.semanticScore,
-      _keywordHits: item.keywordHits,
-      _semanticQueries: item.semanticQueries
-    }));
+    .filter(Boolean);
 
   const rem = Math.max(0, max - pinned.length);
-  return [...pinned, ...results.slice(0, rem)];
+  return [...pinned, ...matched.slice(0, rem)];
 }
 
+// Public entry point: try semantic, fall back to keyword if unavailable.
 async function getRelevantMemories(msg) {
-  const keywordEvidence = getKeywordEvidence(msg);
-  const semanticRows = await getRelevantMemoriesBySemantics(msg);
-
-  if (semanticRows === null) {
-    return getRelevantMemoriesByKeyword(msg);
-  }
-
-  return resolveRankedMemoryResults(keywordEvidence, semanticRows);
+  const semantic = await getRelevantMemoriesBySemantics(msg);
+  if (semantic !== null) return semantic;
+  return getRelevantMemoriesByKeyword(msg);
 }
 
 // One-time backfill: ensure every card has multi-dimensional embeddings.
@@ -3990,63 +3687,57 @@ function saveMemorySettings() {
 async function migrateExistingCards() {
   if (!state.apiKey) { showToast('Set API key first'); return; }
   if (!state.memories || !state.memories.length) { showToast('No cards to migrate'); return; }
-
-  const missingKeywords = state.memories.filter(card =>
-    !Array.isArray(card.keywords) || card.keywords.length === 0
-  );
-
-  const message = `Fill missing keywords for ${missingKeywords.length} of ${state.memories.length} card${state.memories.length === 1 ? '' : 's'} and verify embeddings for all cards?\n\nThis will NOT rewrite card names or content. Existing keywords stay.`;
-  if (!confirm(message)) return;
+  if (!confirm(`Re-extract and re-embed ${state.memories.length} card${state.memories.length === 1 ? '' : 's'}? This will rewrite the content of every card and call the model for each. Existing pin/enabled settings stay.`)) return;
 
   const total = state.memories.length;
-  let keywordsAdded = 0;
-  let keywordFailed = 0;
+  let textRewritten = 0;
   let embedded = 0;
+  let textFailed = 0;
   let embedFailed = 0;
 
-  for (let i = 0; i < state.memories.length; i++) {
-    const card = state.memories[i];
-
+  for (const card of state.memories) {
     try {
-      const hasKeywords = Array.isArray(card.keywords) && card.keywords.length > 0;
-
-      if (!hasKeywords) {
-        const keywords = await generateMemoryKeywords(card.name || 'Untitled', card.content || '');
-        if (keywords.length) {
-          card.keywords = keywords;
-          card.updatedAt = Date.now();
-          keywordsAdded++;
-        } else {
-          keywordFailed++;
+      // Build a source string the extractor can re-parse
+      const source = `## ${card.name || 'Untitled'}\n\n${card.content || ''}`;
+      const cards = await extractMemoryCards(source, 'fragment');
+      if (cards.length > 0) {
+        const fresh = cards[0]; // fragment input always yields one card
+        card.name = fresh.name;
+        card.content = fresh.content;
+        // Preserve keywords if the new extractor produced them (used by keyword fallback)
+        if (fresh.keywords && Array.isArray(fresh.keywords)) {
+          card.keywords = fresh.keywords;
         }
-      }
-
-      // Verify embeddings without rewriting text. embedAndStoreCard skips unchanged
-      // cards that already have a matching content_hash.
-      const embedResult = await embedAndStoreCard(card);
-      if (embedResult === true) {
-        embedded++;
+        card.updatedAt = Date.now();
+        // Strip legacy fields so they don't drift back in
+        delete card.summary;
+        delete card.priority;
+        textRewritten++;
+        // Re-embed and track that result independently
+        const embedResult = await embedAndStoreCard(card);
+        if (embedResult === true) {
+          embedded++;
+        } else {
+          embedFailed++;
+        }
       } else {
-        embedFailed++;
+        textFailed++;
       }
     } catch (e) {
-      console.warn('Keyword/vector backfill failed for card', card.id, e);
-      keywordFailed++;
+      console.warn('Migration failed for card', card.id, e);
+      textFailed++;
     }
-
-    const done = i + 1;
-    if (done % 3 === 0 || done === total) {
-      showToast(`Checking cards… ${done}/${total}`, false);
+    const done = textRewritten + textFailed;
+    if (done % 3 === 0) {
+      showToast(`Migrating… ${done}/${total}`, false);
     }
   }
-
   saveState();
   renderMemoryCards();
-
-  const parts = [`Added keywords to ${keywordsAdded}/${missingKeywords.length}`];
-  if (keywordFailed) parts.push(`${keywordFailed} keyword failed`);
-  parts.push(`vectors verified ${embedded}/${total}`);
-  if (embedFailed) parts.push(`${embedFailed} vector failed`);
+  const parts = [`Rewrote ${textRewritten}/${total}`];
+  if (textFailed) parts.push(`${textFailed} rewrite failed`);
+  parts.push(`embedded ${embedded}/${textRewritten}`);
+  if (embedFailed) parts.push(`${embedFailed} embed failed`);
   showToast(parts.join(' · '), false);
 }
 
@@ -4337,36 +4028,16 @@ function closeMemoryEditor() {
 async function saveMemory() {
   const name = document.getElementById('memNameInput').value.trim();
   if (!name) { showToast('Give it a name'); return; }
-
-  const content = document.getElementById('memContentInput').value;
-  let existingCard = editingMemoryId ? state.memories.find(x => x.id === editingMemoryId) : null;
-  const textChanged = !existingCard ||
-    (existingCard.name || '') !== name ||
-    (existingCard.content || '') !== content;
-
-  let keywords = Array.isArray(existingCard?.keywords) ? existingCard.keywords : [];
-
-  // Manual +New/edit cards must have the same keyword metadata as extracted cards.
-  // Preserve existing keywords if text did not change; regenerate only when missing
-  // or when name/content changed. Never rewrite name/content here.
-  if (state.apiKey && (textChanged || !keywords.length)) {
-    showToast('Generating memory keywords…', false);
-    const generated = await generateMemoryKeywords(name, content);
-    if (generated.length) keywords = generated;
-  }
-
   const data = {
     name,
-    content,
-    keywords,
+    content: document.getElementById('memContentInput').value,
     enabled: document.getElementById('memAlwaysLoad').checked,
     pinned: document.getElementById('memPinned').checked,
     updatedAt: Date.now(),
   };
-
   let card;
   if (editingMemoryId) {
-    card = existingCard;
+    card = state.memories.find(x => x.id === editingMemoryId);
     if (card) Object.assign(card, data);
   } else {
     card = { id: 'mem_' + Date.now(), ...data, capturedAt: Date.now(), createdAt: Date.now() };

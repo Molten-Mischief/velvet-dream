@@ -1,7 +1,7 @@
 // Velvet Dream Service Worker
 // Stable-entry deploy: app always launches index.html. Wave files are snapshots only.
 // Bump CACHE_VERSION when you push new code so clients refresh.
-const CACHE_VERSION = 'v27-visible-build-label';
+const CACHE_VERSION = 'v24-stable-entry';
 const CACHE_NAME = `velvet-dream-${CACHE_VERSION}`;
 
 const CORE_ASSETS = [
