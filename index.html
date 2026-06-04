@@ -807,7 +807,7 @@ html, body {
       <div class="collapsible-section collapsed" id="memMigrateSection">
         <div style="padding-top:12px">
           <div class="hint" style="margin-bottom:10px">Re-extract existing cards into the new Title + Context format and rebuild multi-dimensional embeddings. Runs once. Existing card IDs and pin/enabled flags are preserved.</div>
-          <button class="action-btn" style="width:100%" onclick="migrateExistingCards()">Migrate all cards now</button>
+          <button class="action-btn" style="width:100%" onclick="migrateExistingCards()">Fill missing keywords / verify vectors</button>
         </div>
       </div>
       <div class="section-divider" onclick="toggleSection('memExportSection',this)" style="margin-top:8px"><span class="toggle-arrow collapsed">▼</span> Export Memory Cards</div>
@@ -1703,7 +1703,7 @@ async function embedAndStoreCard(card) {
 // UNIFIED MEMORY EXTRACTION
 // Single function for all memory creation paths: capture button, auto-capture, MD upload,
 // paste, manual create. Takes raw input text and produces one or more cards in the
-// Title + Context format. Returns array of { name, content } objects.
+// Title + Context format. Returns array of { name, content, keywords } objects.
 //
 // inputType controls how the extraction prompt frames the source:
 //   'conversation'  → conversation window with role markers
@@ -1840,21 +1840,24 @@ If only one card is appropriate, the array has one object. If the source contain
   return validated;
 }
 
-// Generate keywords for an already-written card without rewriting the card itself.
-// Uses the same keyword wording as the unified memory extractor.
-async function generateKeywordsForMemoryCard(name, content) {
+// Keyword-only helper for manual cards and safe backfill.
+// Uses the same keyword wording as the unified extractor, but preserves the
+// existing card name/content exactly and returns only keywords.
+async function generateMemoryKeywords(name, content) {
   if (!state.apiKey) return [];
-  const aiName = state.aiLabel || 'Kai';
-  const userName = state.userLabel || 'the user';
-  const prompt = `The following is an already-written memory card for ${userName} and ${aiName}. Generate only the keywords field for it. Do not rewrite the name or content.
+
+  const prompt = `Create keywords for this existing memory card.
+
+Keep the memory card name and content exactly as they are. Do not rewrite, summarize, correct, or reformat them. Return only keywords.
 
 Memory card:
-name: ${name || 'Untitled'}
-content: ${content || ''}
+Name: ${name || 'Untitled'}
+Content:
+${content || ''}
 
 keywords — Array of 3-5 short lowercase keywords or short phrases (1-3 words each) that someone might use to bring this memory up later. Specific nouns, names, topics. Not generic words.
 
-Return ONLY a JSON object, no markdown fences, no preamble:
+Return ONLY a JSON object with this exact shape, no markdown fences, no preamble:
 {"keywords": ["word", "phrase", "topic"]}`;
 
   const chat = getActiveChat();
@@ -1874,7 +1877,7 @@ Return ONLY a JSON object, no markdown fences, no preamble:
         model,
         messages: [{ role: 'user', content: prompt }],
         temperature: 0.2,
-        max_tokens: 500,
+        max_tokens: 300,
         response_format: { type: 'json_object' }
       })
     });
@@ -1884,7 +1887,8 @@ Return ONLY a JSON object, no markdown fences, no preamble:
   }
 
   if (!resp.ok) {
-    console.warn('Keyword generation HTTP error:', resp.status);
+    const bodyText = await resp.text().catch(() => '');
+    console.warn('Keyword generation failed:', resp.status, bodyText);
     return [];
   }
 
@@ -1896,41 +1900,15 @@ Return ONLY a JSON object, no markdown fences, no preamble:
   try {
     parsed = JSON.parse(raw);
   } catch (e) {
-    console.warn('Keyword generation JSON parse failed:', e);
+    console.warn('Keyword generation JSON parse failed:', e, raw.slice(0, 100));
     return [];
   }
 
-  const keywords = Array.isArray(parsed?.keywords)
-    ? parsed.keywords
-    : (Array.isArray(parsed) ? parsed : []);
-
-  return normalizeKeywordList(keywords, 5);
-}
-
-async function ensureMemoryCardKeywords(card, previousKeywordHash = '') {
-  if (!card) return card;
-  const keywordBody = `${card.name || 'Untitled'}\n\n${card.content || ''}`;
-  const keywordHash = contentHash(keywordBody);
-  const hasKeywords = Array.isArray(card.keywords) && card.keywords.length > 0;
-
-  // If the name/content did not change and the card already has keywords, keep them.
-  if (hasKeywords && previousKeywordHash && previousKeywordHash === keywordHash) {
-    card.keywords = normalizeKeywordList(card.keywords, 8);
-    card.keywordHash = keywordHash;
-    return card;
-  }
-
-  const generated = await generateKeywordsForMemoryCard(card.name, card.content);
-  if (generated.length) {
-    card.keywords = generated;
-    card.keywordHash = keywordHash;
-  } else if (hasKeywords) {
-    card.keywords = normalizeKeywordList(card.keywords, 8);
-    card.keywordHash = keywordHash;
-  } else {
-    card.keywords = [];
-  }
-  return card;
+  const keywords = Array.isArray(parsed?.keywords) ? parsed.keywords : [];
+  return keywords
+    .filter(k => typeof k === 'string' && k.trim())
+    .map(k => k.toLowerCase().trim().slice(0, 50))
+    .slice(0, 8);
 }
 
 // Consolidator: when extractMemoryCards returns 2+ cards, check whether any of
@@ -4011,57 +3989,63 @@ function saveMemorySettings() {
 async function migrateExistingCards() {
   if (!state.apiKey) { showToast('Set API key first'); return; }
   if (!state.memories || !state.memories.length) { showToast('No cards to migrate'); return; }
-  if (!confirm(`Re-extract and re-embed ${state.memories.length} card${state.memories.length === 1 ? '' : 's'}? This will rewrite the content of every card and call the model for each. Existing pin/enabled settings stay.`)) return;
+
+  const missingKeywords = state.memories.filter(card =>
+    !Array.isArray(card.keywords) || card.keywords.length === 0
+  );
+
+  const message = `Fill missing keywords for ${missingKeywords.length} of ${state.memories.length} card${state.memories.length === 1 ? '' : 's'} and verify embeddings for all cards?\n\nThis will NOT rewrite card names or content. Existing keywords stay.`;
+  if (!confirm(message)) return;
 
   const total = state.memories.length;
-  let textRewritten = 0;
+  let keywordsAdded = 0;
+  let keywordFailed = 0;
   let embedded = 0;
-  let textFailed = 0;
   let embedFailed = 0;
 
-  for (const card of state.memories) {
+  for (let i = 0; i < state.memories.length; i++) {
+    const card = state.memories[i];
+
     try {
-      // Build a source string the extractor can re-parse
-      const source = `## ${card.name || 'Untitled'}\n\n${card.content || ''}`;
-      const cards = await extractMemoryCards(source, 'fragment');
-      if (cards.length > 0) {
-        const fresh = cards[0]; // fragment input always yields one card
-        card.name = fresh.name;
-        card.content = fresh.content;
-        // Preserve keywords if the new extractor produced them (used by keyword fallback)
-        if (fresh.keywords && Array.isArray(fresh.keywords)) {
-          card.keywords = fresh.keywords;
-        }
-        card.updatedAt = Date.now();
-        // Strip legacy fields so they don't drift back in
-        delete card.summary;
-        delete card.priority;
-        textRewritten++;
-        // Re-embed and track that result independently
-        const embedResult = await embedAndStoreCard(card);
-        if (embedResult === true) {
-          embedded++;
+      const hasKeywords = Array.isArray(card.keywords) && card.keywords.length > 0;
+
+      if (!hasKeywords) {
+        const keywords = await generateMemoryKeywords(card.name || 'Untitled', card.content || '');
+        if (keywords.length) {
+          card.keywords = keywords;
+          card.updatedAt = Date.now();
+          keywordsAdded++;
         } else {
-          embedFailed++;
+          keywordFailed++;
         }
+      }
+
+      // Verify embeddings without rewriting text. embedAndStoreCard skips unchanged
+      // cards that already have a matching content_hash.
+      const embedResult = await embedAndStoreCard(card);
+      if (embedResult === true) {
+        embedded++;
       } else {
-        textFailed++;
+        embedFailed++;
       }
     } catch (e) {
-      console.warn('Migration failed for card', card.id, e);
-      textFailed++;
+      console.warn('Keyword/vector backfill failed for card', card.id, e);
+      keywordFailed++;
     }
-    const done = textRewritten + textFailed;
-    if (done % 3 === 0) {
-      showToast(`Migrating… ${done}/${total}`, false);
+
+    const done = i + 1;
+    if (done % 3 === 0 || done === total) {
+      showToast(`Checking cards… ${done}/${total}`, false);
     }
   }
+
   saveState();
   renderMemoryCards();
-  const parts = [`Rewrote ${textRewritten}/${total}`];
-  if (textFailed) parts.push(`${textFailed} rewrite failed`);
-  parts.push(`embedded ${embedded}/${textRewritten}`);
-  if (embedFailed) parts.push(`${embedFailed} embed failed`);
+
+  const parts = [`Added keywords to ${keywordsAdded}/${missingKeywords.length}`];
+  if (keywordFailed) parts.push(`${keywordFailed} keyword failed`);
+  parts.push(`vectors verified ${embedded}/${total}`);
+  if (embedFailed) parts.push(`${embedFailed} vector failed`);
   showToast(parts.join(' · '), false);
 }
 
@@ -4354,48 +4338,46 @@ async function saveMemory() {
   if (!name) { showToast('Give it a name'); return; }
 
   const content = document.getElementById('memContentInput').value;
+  let existingCard = editingMemoryId ? state.memories.find(x => x.id === editingMemoryId) : null;
+  const textChanged = !existingCard ||
+    (existingCard.name || '') !== name ||
+    (existingCard.content || '') !== content;
+
+  let keywords = Array.isArray(existingCard?.keywords) ? existingCard.keywords : [];
+
+  // Manual +New/edit cards must have the same keyword metadata as extracted cards.
+  // Preserve existing keywords if text did not change; regenerate only when missing
+  // or when name/content changed. Never rewrite name/content here.
+  if (state.apiKey && (textChanged || !keywords.length)) {
+    showToast('Generating memory keywords…', false);
+    const generated = await generateMemoryKeywords(name, content);
+    if (generated.length) keywords = generated;
+  }
+
   const data = {
     name,
     content,
+    keywords,
     enabled: document.getElementById('memAlwaysLoad').checked,
     pinned: document.getElementById('memPinned').checked,
     updatedAt: Date.now(),
   };
 
   let card;
-  let previousKeywordHash = '';
-
   if (editingMemoryId) {
-    card = state.memories.find(x => x.id === editingMemoryId);
-    if (card) {
-      previousKeywordHash = card.keywordHash || contentHash(`${card.name || 'Untitled'}\n\n${card.content || ''}`);
-      Object.assign(card, data);
-    }
+    card = existingCard;
+    if (card) Object.assign(card, data);
   } else {
-    card = {
-      id: 'mem_' + Date.now(),
-      ...data,
-      keywords: [],
-      capturedAt: Date.now(),
-      createdAt: Date.now()
-    };
+    card = { id: 'mem_' + Date.now(), ...data, capturedAt: Date.now(), createdAt: Date.now() };
     state.memories.push(card);
   }
-
-  if (!card) { showToast('Memory not found'); return; }
-
-  // Ensure manual +New/edit cards have the same kind of 3-5 keyword anchors
-  // that extracted/imported memory cards already receive.
-  await ensureMemoryCardKeywords(card, previousKeywordHash);
-
   saveState();
   pendingMemoryDraft = null;
   closeMemoryEditor();
   renderMemoryCards();
   showToast('Memory saved', false);
-
-  // Embed in background — full content goes through four-dimensional embedding.
-  embedAndStoreCard(card).catch(e => console.warn('Embed on save failed:', e));
+  // Embed in background — full content goes through four-dimensional embedding
+  if (card) embedAndStoreCard(card).catch(e => console.warn('Embed on save failed:', e));
 }
 
 function deleteMemory(id) {
