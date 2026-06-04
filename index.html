@@ -235,6 +235,7 @@ html, body {
 }
 .header-left { display: flex; align-items: center; gap: 12px; }
 .header-title { font-family: 'Libre Baskerville', serif; font-size: 18px; font-weight: 400; color: var(--text-primary); letter-spacing: 0.04em; }
+.header-wave { font-size: 11px; color: var(--text-muted); border: 1px solid var(--border); border-radius: 999px; padding: 2px 8px; letter-spacing: 0.03em; }
 .header-right { display: flex; gap: 4px; }
 .header-btn {
   background: none; border: 1px solid var(--border); color: var(--text-secondary);
@@ -562,7 +563,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream</div>
+      <div class="header-title">Velvet Dream</div><div class="header-wave">Wave 27</div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
