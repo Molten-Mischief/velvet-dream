@@ -4803,25 +4803,12 @@ function setupMobileInfoBarPin() {
 })();
 </script>
 <script>
-// PWA service worker registration
+// Unregister any previously installed service workers and clear their caches.
 if ('serviceWorker' in navigator) {
-  // When a new SW takes control (after skipWaiting + clients.claim), the page
-  // is still running the OLD JS in memory. Reload once so the user gets the
-  // fresh code immediately, no manual cache clear needed.
-  let _swRefreshing = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (_swRefreshing) return;
-    _swRefreshing = true;
-    window.location.reload();
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    regs.forEach(reg => reg.unregister());
   });
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js')
-      .then((reg) => {
-        // Check for updates every 30 minutes while app is open
-        setInterval(() => reg.update(), 30 * 60 * 1000);
-      })
-      .catch((err) => console.warn('SW registration failed:', err));
-  });
+  caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
 }
 </script>
 </body>
