@@ -4727,6 +4727,9 @@ function setupMobileInfoBarPin() {
         try {
           const { data: cr } = await supabase.from('user_data').select('data').eq('user_id', currentUser.id).single();
           if (cloudHasEncryptedBlobs(cr?.data)) {
+            // Dismiss splash early — splash z-index 1000 covers the unlock screen z-index 500.
+            // Without this the modal renders behind the splash and the app appears stuck.
+            await dismissSplashAfter(0);
             const pw = await promptForKeyUnlock(cr.data);
             if (pw) sessionPassword = pw;
           }
