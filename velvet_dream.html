@@ -595,7 +595,7 @@ html, body {
     <span class="token-badge" id="tokenBadge"></span>
   </div>
   <div class="chat-area" id="chatArea">
-    <div class="welcome"><img class="welcome-rabbit" src="" alt=""><div class="welcome-logo">Velvet Dream</div><div class="welcome-sub">Your space. Pick a model, write, begin.</div></div>
+    <div class="welcome"><img class="welcome-rabbit" src="" alt=""><div class="welcome-logo">Velvet Dream <span style="font-size:11px;opacity:0.4;font-weight:400">v30</span></div><div class="welcome-sub">Your space. Pick a model, write, begin.</div></div>
   </div>
   <button class="jump-bottom-btn" id="jumpBottomBtn" onclick="jumpToBottom()" title="Jump to latest">
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
@@ -1087,13 +1087,14 @@ async function hydrateEncryptedKeys(cloudData) {
   return foundPlainFallback;
 }
 
-// Build a cloud-bound payload from current state: encrypt all 4 keys (if we have
-// the session password), strip all plain key fields and voice.providers.*.apiKey
-// fields. This is the single canonical "what we upload to cloud" function — used
-// by every cloud write path so there's exactly one set of rules.
+// Build a settings-only cloud payload: encrypts API keys, strips plain keys,
+// and excludes chats and memories (they live in their own tables now).
 async function buildEncryptedPayload() {
   const payload = { ...state };
   delete payload.isStreaming;
+  // Chats and memories live in user_chats / user_memories — never in settings blob.
+  delete payload.chats;
+  delete payload.memories;
   if (sessionPassword && currentUser) {
     const salt = currentUser.id;
     if (state.apiKey) payload.apiKeyEnc = await encryptString(state.apiKey, sessionPassword, salt);
@@ -1118,6 +1119,69 @@ async function buildEncryptedPayload() {
     }
   }
   return payload;
+}
+
+// Push all local chats to user_chats (upsert by id).
+async function pushChatsToCloud() {
+  if (!supabase || !currentUser || !state.chats?.length) return;
+  const rows = state.chats.map(chat => ({
+    id: chat.id,
+    user_id: currentUser.id,
+    data: chat,
+    updated_at: chat.updatedAt ? new Date(chat.updatedAt).toISOString() : new Date().toISOString()
+  }));
+  const { error } = await supabase.from('user_chats').upsert(rows, { onConflict: 'id,user_id' });
+  if (error) console.warn('pushChatsToCloud error:', error);
+}
+
+// Push all local memories to user_memories (upsert by id).
+async function pushMemoriesToCloud() {
+  if (!supabase || !currentUser || !state.memories?.length) return;
+  const rows = state.memories.map(mem => ({
+    id: mem.id,
+    user_id: currentUser.id,
+    data: mem,
+    deleted: false,
+    updated_at: mem.updatedAt ? new Date(mem.updatedAt).toISOString() : new Date().toISOString()
+  }));
+  const { error } = await supabase.from('user_memories').upsert(rows, { onConflict: 'id,user_id' });
+  if (error) console.warn('pushMemoriesToCloud error:', error);
+}
+
+// Pull chats from user_chats and merge with local by updatedAt.
+async function pullChatsFromCloud() {
+  if (!supabase || !currentUser) return;
+  const { data, error } = await supabase.from('user_chats').select('data').eq('user_id', currentUser.id);
+  if (error) { console.warn('pullChatsFromCloud error:', error); return; }
+  const deletedIds = new Set(state.deletedChatIds || []);
+  const map = new Map();
+  (state.chats || []).forEach(c => { if (!deletedIds.has(c.id)) map.set(c.id, c); });
+  (data || []).forEach(row => {
+    const chat = row.data;
+    if (!chat?.id || deletedIds.has(chat.id)) return;
+    const existing = map.get(chat.id);
+    if (!existing || (chat.updatedAt || 0) > (existing.updatedAt || 0)) map.set(chat.id, chat);
+    else if (existing && chat.updatedAt === existing.updatedAt && (chat.messages?.length || 0) > (existing.messages?.length || 0)) map.set(chat.id, chat);
+  });
+  state.chats = [...map.values()].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+}
+
+// Pull memories from user_memories and merge with local by updatedAt.
+async function pullMemoriesFromCloud() {
+  if (!supabase || !currentUser) return;
+  const { data, error } = await supabase.from('user_memories').select('data, deleted').eq('user_id', currentUser.id);
+  if (error) { console.warn('pullMemoriesFromCloud error:', error); return; }
+  const deletedIds = new Set(state.deletedMemIds || []);
+  const map = new Map();
+  (state.memories || []).forEach(m => { if (!deletedIds.has(m.id)) map.set(m.id, m); });
+  (data || []).forEach(row => {
+    if (row.deleted) return;
+    const mem = row.data;
+    if (!mem?.id || deletedIds.has(mem.id)) return;
+    const existing = map.get(mem.id);
+    if (!existing || (mem.updatedAt || 0) > (existing.updatedAt || 0)) map.set(mem.id, mem);
+  });
+  state.memories = [...map.values()];
 }
 
 // Returns true if state has any key value that doesn't yet exist as an encrypted
@@ -1289,41 +1353,38 @@ async function _doSave() {
   }
 }
 
-// Push current state to cloud. Whole-state newest-wins: if cloud is newer than local,
-// the cloud wins and we pull instead. Otherwise local replaces cloud.
+// Auto-push: settings go to user_data, chats to user_chats, memories to user_memories.
+// Settings: newest-wins by stateTimestamp. Chats/memories: per-row, never replaced wholesale.
 async function pushToCloud() {
   if (!supabase || !currentUser) return;
   try {
+    // --- SETTINGS ---
     const { data: cr } = await supabase.from('user_data').select('data').eq('user_id', currentUser.id).single();
-    const cloudData = cr?.data;
-    // Always hydrate first (decrypts encrypted blobs + pulls plain-text fallbacks)
-    await hydrateEncryptedKeys(cloudData);
-    const cloudTs = cloudData?.stateTimestamp || 0;
+    const cloudSettings = cr?.data;
+    await hydrateEncryptedKeys(cloudSettings);
+    const cloudTs = cloudSettings?.stateTimestamp || 0;
     const localTs = state.stateTimestamp || 0;
-    // If cloud is newer than what we have, pull instead of overwriting
-    if (cloudTs > localTs) {
+    if (cloudSettings && cloudTs > localTs) {
+      // Cloud settings are newer — adopt them, but never touch local chats/memories.
       const k = state.apiKey;
-      state = { ...state, ...cloudData };
-      state.apiKey = k; // never let cloud overwrite the (now hydrated) apiKey
+      const chats = state.chats; const memories = state.memories;
+      state = { ...state, ...cloudSettings };
+      state.chats = chats; state.memories = memories;
+      state.apiKey = k;
       delete state.isStreaming;
+      ensureVoiceState();
       if (saveTimeout) clearTimeout(saveTimeout);
       await _doSave();
       if (typeof renderChatList === 'function') renderChatList();
       if (typeof renderMessages === 'function') renderMessages();
       if (typeof renderMemoryCards === 'function') renderMemoryCards();
-      // Self-heal: if cloud is missing any encrypted blobs for keys we now have
-      // (e.g., we found a plain fallback in voice.providers), push encrypted versions back
-      if (needsCloudBackfill(cloudData)) {
-        state.stateTimestamp = Date.now();
-        const payload = await buildEncryptedPayload();
-        await supabase.from('user_data').upsert({ user_id: currentUser.id, data: payload, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
-        await _doSave();
-      }
-      return;
+    } else {
+      const payload = await buildEncryptedPayload();
+      await supabase.from('user_data').upsert({ user_id: currentUser.id, data: payload, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
     }
-    // Local is newer (or equal): push it up using the canonical payload builder
-    const payload = await buildEncryptedPayload();
-    await supabase.from('user_data').upsert({ user_id: currentUser.id, data: payload, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    // --- CHATS & MEMORIES — always push local up, per-row ---
+    await pushChatsToCloud();
+    await pushMemoriesToCloud();
   } catch (e) { console.error('pushToCloud:', e); }
 }
 
@@ -1334,7 +1395,6 @@ async function manualSync() {
   btn.textContent = '⏳';
   btn.disabled = true;
   try {
-    // Manual sync = force a fresh compare. Whichever side is newer wins.
     await syncWithCloud();
     renderChatList(); renderMessages(); renderModelSelect();
     if (state.activeChatId) syncModelDropdown();
@@ -1350,76 +1410,61 @@ async function manualSync() {
   }
 }
 
-// Bidirectional sync: compare timestamps, newest wins for whole state.
-// Deletion lists are always unioned so deletes never get resurrected.
-// Encrypted keys are hydrated from cloud first, before any merge logic — they
-// live canonically in cloud and need to flow into state on every read.
-// If hydrate pulled any plain-text fallbacks, we back-fill cloud with encrypted
-// versions before returning.
+// Full bidirectional sync.
+// Settings (user_data): newest stateTimestamp wins.
+// Chats (user_chats) + Memories (user_memories): merge by ID, newer updatedAt wins per item.
+// They never share a timestamp or overwrite each other.
 async function syncWithCloud() {
   if (!supabase || !currentUser) return;
   try {
+    // --- SETTINGS ---
     const { data: cr } = await supabase.from('user_data').select('data').eq('user_id', currentUser.id).single();
-    const cloudData = cr?.data || null;
-    // Always hydrate encrypted keys first, before timestamp gates and state spread.
-    await hydrateEncryptedKeys(cloudData);
-    // Snapshot the back-fill decision now, based on the cloud blob we just read.
-    // After we mutate state below this can change, but we want the original signal.
-    const shouldBackfill = needsCloudBackfill(cloudData);
-    const cloudTs = cloudData?.stateTimestamp || 0;
+    const cloudSettings = cr?.data || null;
+    await hydrateEncryptedKeys(cloudSettings);
+    const shouldBackfill = needsCloudBackfill(cloudSettings);
+    const cloudTs = cloudSettings?.stateTimestamp || 0;
     const localTs = state.stateTimestamp || 0;
-    const k = state.apiKey; // save the (possibly hydrated) apiKey
+    const k = state.apiKey;
 
-    if (cloudData && cloudTs > localTs) {
-      // Cloud wins. Adopt cloud state, but union deletion lists so any local
-      // deletes we made since cloud was written aren't lost.
-      const localDelChats = new Set(state.deletedChatIds || []);
-      const localDelMems = new Set(state.deletedMemIds || []);
-      const cloudDelChats = new Set(cloudData.deletedChatIds || []);
-      const cloudDelMems = new Set(cloudData.deletedMemIds || []);
-      // Preserve hydrated voice api keys before the spread overwrites them.
-      // (The whole voice object is NOT snapshotted: cloud's voice settings
-      // — voiceId, model, stability, etc. — must flow through from cloud.
-      // ensureVoiceState below re-maps the hydrated apiKeys into voice.providers.*.)
-      const hydratedOpenai = state.openaiKey;
-      const hydratedEleven = state.elevenLabsKey;
-      const hydratedXai = state.xaiKey;
-      state = { ...state, ...cloudData };
-      state.deletedChatIds = [...new Set([...localDelChats, ...cloudDelChats])];
-      state.deletedMemIds = [...new Set([...localDelMems, ...cloudDelMems])];
-      state.chats = (state.chats || []).filter(c => !state.deletedChatIds.includes(c.id));
-      state.memories = (state.memories || []).filter(m => !state.deletedMemIds.includes(m.id));
+    if (cloudSettings && cloudTs > localTs) {
+      // Cloud settings win — adopt but preserve chats/memories (handled separately).
+      const chats = state.chats; const memories = state.memories;
+      const delChats = state.deletedChatIds; const delMems = state.deletedMemIds;
+      state = { ...state, ...cloudSettings };
+      state.chats = chats; state.memories = memories;
+      state.deletedChatIds = delChats; state.deletedMemIds = delMems;
       state.apiKey = k;
-      if (hydratedOpenai) state.openaiKey = hydratedOpenai;
-      if (hydratedEleven) state.elevenLabsKey = hydratedEleven;
-      if (hydratedXai) state.xaiKey = hydratedXai;
       ensureVoiceState();
       delete state.isStreaming;
-      if (saveTimeout) clearTimeout(saveTimeout);
-      await _doSave();
-    } else {
-      // Local wins (or no cloud data at all). Push local up. Union deletion lists.
-      if (cloudData) {
-        const localDelChats = new Set(state.deletedChatIds || []);
-        const localDelMems = new Set(state.deletedMemIds || []);
-        const cloudDelChats = new Set(cloudData.deletedChatIds || []);
-        const cloudDelMems = new Set(cloudData.deletedMemIds || []);
-        state.deletedChatIds = [...new Set([...localDelChats, ...cloudDelChats])];
-        state.deletedMemIds = [...new Set([...localDelMems, ...cloudDelMems])];
-      }
-      const payload = await buildEncryptedPayload();
-      await supabase.from('user_data').upsert({ user_id: currentUser.id, data: payload, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
     }
 
-    // Self-heal: if cloud was missing encrypted blobs for keys we now have
-    // (e.g., we found plain fallbacks in voice.providers, OR cloud was simply
-    // never given encrypted versions for elevenlabs/xai), push them back encrypted.
+    // Always push whichever settings won back up.
+    const payload = await buildEncryptedPayload();
+    await supabase.from('user_data').upsert({ user_id: currentUser.id, data: payload, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+
     if (shouldBackfill) {
       state.stateTimestamp = Date.now();
-      const payload = await buildEncryptedPayload();
-      await supabase.from('user_data').upsert({ user_id: currentUser.id, data: payload, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
-      await _doSave();
+      const backfill = await buildEncryptedPayload();
+      await supabase.from('user_data').upsert({ user_id: currentUser.id, data: backfill, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
     }
+
+    // --- CHATS & MEMORIES — pull then push, fully independent of settings ---
+    // One-time migration: if user_chats is empty but cloudSettings had chats, seed from old blob.
+    const { data: existingChats } = await supabase.from('user_chats').select('id').eq('user_id', currentUser.id).limit(1);
+    if ((!existingChats || existingChats.length === 0) && cloudSettings?.chats?.length) {
+      state.chats = state.chats?.length ? state.chats : (cloudSettings.chats || []);
+    }
+    const { data: existingMems } = await supabase.from('user_memories').select('id').eq('user_id', currentUser.id).limit(1);
+    if ((!existingMems || existingMems.length === 0) && cloudSettings?.memories?.length) {
+      state.memories = state.memories?.length ? state.memories : (cloudSettings.memories || []);
+    }
+    await pullChatsFromCloud();
+    await pullMemoriesFromCloud();
+    await pushChatsToCloud();
+    await pushMemoriesToCloud();
+
+    if (saveTimeout) clearTimeout(saveTimeout);
+    await _doSave();
   } catch (e) { console.error('syncWithCloud:', e); }
 }
 
@@ -1692,6 +1737,11 @@ function deleteChat(id) {
   }
   saveState(); renderChatList(); renderMessages();
   if (state.activeChatId) syncModelDropdown();
+  // Hard-delete from user_chats so it doesn't sync back from cloud.
+  if (supabase && currentUser) {
+    supabase.from('user_chats').delete().eq('id', id).eq('user_id', currentUser.id)
+      .then(({ error }) => { if (error) console.warn('deleteChat cloud error:', error); });
+  }
 }
 
 function getActiveChat() {
@@ -3125,7 +3175,6 @@ function browserTTSFallback(text, speed) {
 }
 
 async function playSelectedVoice(text) {
-  captureVoicePanelInputs();
   const provider = activeVoiceProvider();
   const speed = state.voice.speed || 1.0;
   if (provider === 'openai') return playOpenAITTS(text, speed);
@@ -4347,11 +4396,12 @@ function deleteMemory(id) {
   saveState();
   renderMemoryCards();
   showToast('Deleted', false);
-  // Also delete the embedding in Supabase (best effort, don't block)
+  // Soft-delete in user_memories and remove embedding.
   if (supabase && currentUser) {
-    supabase.from('memory_embeddings').delete().eq('card_id', id).then(({ error }) => {
-      if (error) console.warn('Embedding delete failed:', error);
-    });
+    supabase.from('user_memories').update({ deleted: true }).eq('id', id).eq('user_id', currentUser.id)
+      .then(({ error }) => { if (error) console.warn('deleteMemory cloud error:', error); });
+    supabase.from('memory_embeddings').delete().eq('card_id', id)
+      .then(({ error }) => { if (error) console.warn('Embedding delete failed:', error); });
   }
 }
 
@@ -4753,25 +4803,12 @@ function setupMobileInfoBarPin() {
 })();
 </script>
 <script>
-// PWA service worker registration
+// Unregister any previously installed service workers and clear their caches.
 if ('serviceWorker' in navigator) {
-  // When a new SW takes control (after skipWaiting + clients.claim), the page
-  // is still running the OLD JS in memory. Reload once so the user gets the
-  // fresh code immediately, no manual cache clear needed.
-  let _swRefreshing = false;
-  navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (_swRefreshing) return;
-    _swRefreshing = true;
-    window.location.reload();
+  navigator.serviceWorker.getRegistrations().then(regs => {
+    regs.forEach(reg => reg.unregister());
   });
-  window.addEventListener('load', () => {
-    navigator.serviceWorker.register('sw.js')
-      .then((reg) => {
-        // Check for updates every 30 minutes while app is open
-        setInterval(() => reg.update(), 30 * 60 * 1000);
-      })
-      .catch((err) => console.warn('SW registration failed:', err));
-  });
+  caches.keys().then(keys => keys.forEach(k => caches.delete(k)));
 }
 </script>
 </body>
