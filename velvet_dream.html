@@ -562,7 +562,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">26</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">27</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -935,26 +935,101 @@ async function decryptString(encoded, passphrase, saltStr) {
 // independent of timestamp comparisons. If sessionPassword isn't set yet (session
 // restore without password), this is a no-op — state keeps whatever it had from
 // IndexedDB or defaults.
+//
+// Plain-text fallbacks: for each of the 4 keys, if no encrypted blob exists in
+// cloud, we also check cloud's plain locations (voice.providers.*.apiKey for the
+// voice keys) and pull from there. This catches users whose keys were stored
+// plain under older wave versions before encryption was applied everywhere.
+//
+// Returns true if any keys came from a non-encrypted source — caller can use this
+// signal to back-fill cloud with encrypted versions.
 async function hydrateEncryptedKeys(cloudData) {
-  if (!sessionPassword || !currentUser || !cloudData) return;
-  const salt = currentUser.id;
-  if (cloudData.apiKeyEnc) {
-    const k = await decryptString(cloudData.apiKeyEnc, sessionPassword, salt);
-    if (k) state.apiKey = k;
+  if (!cloudData) return false;
+  let foundPlainFallback = false;
+  const salt = currentUser?.id;
+  // Step 1: decrypt encrypted blobs from cloud
+  if (sessionPassword && currentUser) {
+    if (cloudData.apiKeyEnc) {
+      const k = await decryptString(cloudData.apiKeyEnc, sessionPassword, salt);
+      if (k) state.apiKey = k;
+    }
+    if (cloudData.openaiKeyEnc) {
+      const k = await decryptString(cloudData.openaiKeyEnc, sessionPassword, salt);
+      if (k) state.openaiKey = k;
+    }
+    if (cloudData.elevenLabsKeyEnc) {
+      const k = await decryptString(cloudData.elevenLabsKeyEnc, sessionPassword, salt);
+      if (k) state.elevenLabsKey = k;
+    }
+    if (cloudData.xaiKeyEnc) {
+      const k = await decryptString(cloudData.xaiKeyEnc, sessionPassword, salt);
+      if (k) state.xaiKey = k;
+    }
   }
-  if (cloudData.openaiKeyEnc) {
-    const k = await decryptString(cloudData.openaiKeyEnc, sessionPassword, salt);
-    if (k) state.openaiKey = k;
-  }
-  if (cloudData.elevenLabsKeyEnc) {
-    const k = await decryptString(cloudData.elevenLabsKeyEnc, sessionPassword, salt);
-    if (k) state.elevenLabsKey = k;
-  }
-  if (cloudData.xaiKeyEnc) {
-    const k = await decryptString(cloudData.xaiKeyEnc, sessionPassword, salt);
-    if (k) state.xaiKey = k;
+  // Step 2: plain-text fallbacks for any voice key we don't have yet
+  // (catches keys uploaded by older wave versions that didn't encrypt)
+  const cv = cloudData.voice?.providers;
+  if (cv) {
+    if (!state.openaiKey && cv.openai?.apiKey) {
+      state.openaiKey = cv.openai.apiKey;
+      foundPlainFallback = true;
+    }
+    if (!state.elevenLabsKey && cv.elevenlabs?.apiKey) {
+      state.elevenLabsKey = cv.elevenlabs.apiKey;
+      foundPlainFallback = true;
+    }
+    if (!state.xaiKey && cv.xai?.apiKey) {
+      state.xaiKey = cv.xai.apiKey;
+      foundPlainFallback = true;
+    }
   }
   ensureVoiceState();
+  return foundPlainFallback;
+}
+
+// Build a cloud-bound payload from current state: encrypt all 4 keys (if we have
+// the session password), strip all plain key fields and voice.providers.*.apiKey
+// fields. This is the single canonical "what we upload to cloud" function — used
+// by every cloud write path so there's exactly one set of rules.
+async function buildEncryptedPayload() {
+  const payload = { ...state };
+  delete payload.isStreaming;
+  if (sessionPassword && currentUser) {
+    const salt = currentUser.id;
+    if (state.apiKey) payload.apiKeyEnc = await encryptString(state.apiKey, sessionPassword, salt);
+    const ok = state.openaiKey || state.voice?.providers?.openai?.apiKey || '';
+    const elk = state.elevenLabsKey || state.voice?.providers?.elevenlabs?.apiKey || '';
+    const xk = state.xaiKey || state.voice?.providers?.xai?.apiKey || '';
+    if (ok) payload.openaiKeyEnc = await encryptString(ok, sessionPassword, salt);
+    if (elk) payload.elevenLabsKeyEnc = await encryptString(elk, sessionPassword, salt);
+    if (xk) payload.xaiKeyEnc = await encryptString(xk, sessionPassword, salt);
+  }
+  // Always strip plain keys before upload — cloud only ever holds encrypted blobs
+  delete payload.apiKey;
+  delete payload.openaiKey;
+  delete payload.elevenLabsKey;
+  delete payload.xaiKey;
+  if (payload.voice) {
+    payload.voice = JSON.parse(JSON.stringify(payload.voice));
+    if (payload.voice.providers) {
+      delete payload.voice.providers.openai?.apiKey;
+      delete payload.voice.providers.elevenlabs?.apiKey;
+      delete payload.voice.providers.xai?.apiKey;
+    }
+  }
+  return payload;
+}
+
+// Returns true if state has any key value that doesn't yet exist as an encrypted
+// blob in cloud. Used to decide whether to push back encrypted versions after a
+// cloud read.
+function needsCloudBackfill(cloudData) {
+  if (!cloudData || !sessionPassword || !currentUser) return false;
+  if (state.apiKey && !cloudData.apiKeyEnc) return true;
+  if (state.openaiKey && !cloudData.openaiKeyEnc) return true;
+  if (state.elevenLabsKey && !cloudData.elevenLabsKeyEnc) return true;
+  if (state.xaiKey && !cloudData.xaiKeyEnc) return true;
+  return false;
 }
 
 // ===== MODELS =====
@@ -1121,9 +1196,7 @@ async function pushToCloud() {
   try {
     const { data: cr } = await supabase.from('user_data').select('data').eq('user_id', currentUser.id).single();
     const cloudData = cr?.data;
-    // Always hydrate encrypted keys from cloud first, regardless of timestamp.
-    // Encrypted blobs are canonical and only exist in cloud — they need to flow into
-    // state on every read, not just when cloud wins.
+    // Always hydrate first (decrypts encrypted blobs + pulls plain-text fallbacks)
     await hydrateEncryptedKeys(cloudData);
     const cloudTs = cloudData?.stateTimestamp || 0;
     const localTs = state.stateTimestamp || 0;
@@ -1138,36 +1211,18 @@ async function pushToCloud() {
       if (typeof renderChatList === 'function') renderChatList();
       if (typeof renderMessages === 'function') renderMessages();
       if (typeof renderMemoryCards === 'function') renderMemoryCards();
+      // Self-heal: if cloud is missing any encrypted blobs for keys we now have
+      // (e.g., we found a plain fallback in voice.providers), push encrypted versions back
+      if (needsCloudBackfill(cloudData)) {
+        state.stateTimestamp = Date.now();
+        const payload = await buildEncryptedPayload();
+        await supabase.from('user_data').upsert({ user_id: currentUser.id, data: payload, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+        await _doSave();
+      }
       return;
     }
-    // Local is newer (or equal): push it up. Encrypt all keys, strip plain versions.
-    const payload = { ...state };
-    delete payload.isStreaming;
-    if (sessionPassword && currentUser) {
-      const salt = currentUser.id;
-      // Encrypt all four keys. If a key is missing locally, drop the corresponding
-      // *Enc field too — fall back to whatever was already in cloud (via state spread).
-      if (state.apiKey) payload.apiKeyEnc = await encryptString(state.apiKey, sessionPassword, salt);
-      const ok = state.openaiKey || state.voice?.providers?.openai?.apiKey || '';
-      const elk = state.elevenLabsKey || state.voice?.providers?.elevenlabs?.apiKey || '';
-      const xk = state.xaiKey || state.voice?.providers?.xai?.apiKey || '';
-      if (ok) payload.openaiKeyEnc = await encryptString(ok, sessionPassword, salt);
-      if (elk) payload.elevenLabsKeyEnc = await encryptString(elk, sessionPassword, salt);
-      if (xk) payload.xaiKeyEnc = await encryptString(xk, sessionPassword, salt);
-    }
-    // Strip all plain keys before upload — cloud only holds encrypted blobs
-    delete payload.apiKey;
-    delete payload.openaiKey;
-    delete payload.elevenLabsKey;
-    delete payload.xaiKey;
-    if (payload.voice) {
-      payload.voice = JSON.parse(JSON.stringify(payload.voice));
-      if (payload.voice.providers) {
-        delete payload.voice.providers.openai?.apiKey;
-        delete payload.voice.providers.elevenlabs?.apiKey;
-        delete payload.voice.providers.xai?.apiKey;
-      }
-    }
+    // Local is newer (or equal): push it up using the canonical payload builder
+    const payload = await buildEncryptedPayload();
     await supabase.from('user_data').upsert({ user_id: currentUser.id, data: payload, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
   } catch (e) { console.error('pushToCloud:', e); }
 }
@@ -1199,15 +1254,18 @@ async function manualSync() {
 // Deletion lists are always unioned so deletes never get resurrected.
 // Encrypted keys are hydrated from cloud first, before any merge logic — they
 // live canonically in cloud and need to flow into state on every read.
+// If hydrate pulled any plain-text fallbacks, we back-fill cloud with encrypted
+// versions before returning.
 async function syncWithCloud() {
   if (!supabase || !currentUser) return;
   try {
     const { data: cr } = await supabase.from('user_data').select('data').eq('user_id', currentUser.id).single();
     const cloudData = cr?.data || null;
     // Always hydrate encrypted keys first, before timestamp gates and state spread.
-    // If sessionPassword is missing (session restore without password), this is a no-op
-    // and state keeps whatever it had from IndexedDB.
     await hydrateEncryptedKeys(cloudData);
+    // Snapshot the back-fill decision now, based on the cloud blob we just read.
+    // After we mutate state below this can change, but we want the original signal.
+    const shouldBackfill = needsCloudBackfill(cloudData);
     const cloudTs = cloudData?.stateTimestamp || 0;
     const localTs = state.stateTimestamp || 0;
     const k = state.apiKey; // save the (possibly hydrated) apiKey
@@ -1219,8 +1277,7 @@ async function syncWithCloud() {
       const localDelMems = new Set(state.deletedMemIds || []);
       const cloudDelChats = new Set(cloudData.deletedChatIds || []);
       const cloudDelMems = new Set(cloudData.deletedMemIds || []);
-      // Preserve hydrated voice keys before the spread overwrites them with cloud's
-      // (cloud has the encrypted blobs, not plain — but we already decrypted them).
+      // Preserve hydrated voice keys before the spread overwrites them.
       const hydratedOpenai = state.openaiKey;
       const hydratedEleven = state.elevenLabsKey;
       const hydratedXai = state.xaiKey;
@@ -1230,9 +1287,7 @@ async function syncWithCloud() {
       state.deletedMemIds = [...new Set([...localDelMems, ...cloudDelMems])];
       state.chats = (state.chats || []).filter(c => !state.deletedChatIds.includes(c.id));
       state.memories = (state.memories || []).filter(m => !state.deletedMemIds.includes(m.id));
-      state.apiKey = k; // restore hydrated apiKey
-      // Restore the hydrated voice keys (cloud doesn't have plain versions to overwrite,
-      // but if state.voice was spread in from cloud, the providers.*.apiKey would be empty).
+      state.apiKey = k;
       if (hydratedOpenai) state.openaiKey = hydratedOpenai;
       if (hydratedEleven) state.elevenLabsKey = hydratedEleven;
       if (hydratedXai) state.xaiKey = hydratedXai;
@@ -1251,33 +1306,18 @@ async function syncWithCloud() {
         state.deletedChatIds = [...new Set([...localDelChats, ...cloudDelChats])];
         state.deletedMemIds = [...new Set([...localDelMems, ...cloudDelMems])];
       }
-      const payload = { ...state };
-      delete payload.isStreaming;
-      // Encrypt all four keys before upload (apiKey + 3 voice keys), strip plain versions
-      if (sessionPassword && currentUser) {
-        const salt = currentUser.id;
-        if (state.apiKey) payload.apiKeyEnc = await encryptString(state.apiKey, sessionPassword, salt);
-        const ok = state.openaiKey || state.voice?.providers?.openai?.apiKey || '';
-        const elk = state.elevenLabsKey || state.voice?.providers?.elevenlabs?.apiKey || '';
-        const xk = state.xaiKey || state.voice?.providers?.xai?.apiKey || '';
-        if (ok) payload.openaiKeyEnc = await encryptString(ok, sessionPassword, salt);
-        if (elk) payload.elevenLabsKeyEnc = await encryptString(elk, sessionPassword, salt);
-        if (xk) payload.xaiKeyEnc = await encryptString(xk, sessionPassword, salt);
-      }
-      // Always strip plain keys before upload — cloud only ever holds encrypted blobs
-      delete payload.apiKey;
-      delete payload.openaiKey;
-      delete payload.elevenLabsKey;
-      delete payload.xaiKey;
-      if (payload.voice) {
-        payload.voice = JSON.parse(JSON.stringify(payload.voice));
-        if (payload.voice.providers) {
-          delete payload.voice.providers.openai?.apiKey;
-          delete payload.voice.providers.elevenlabs?.apiKey;
-          delete payload.voice.providers.xai?.apiKey;
-        }
-      }
+      const payload = await buildEncryptedPayload();
       await supabase.from('user_data').upsert({ user_id: currentUser.id, data: payload, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+    }
+
+    // Self-heal: if cloud was missing encrypted blobs for keys we now have
+    // (e.g., we found plain fallbacks in voice.providers, OR cloud was simply
+    // never given encrypted versions for elevenlabs/xai), push them back encrypted.
+    if (shouldBackfill) {
+      state.stateTimestamp = Date.now();
+      const payload = await buildEncryptedPayload();
+      await supabase.from('user_data').upsert({ user_id: currentUser.id, data: payload, updated_at: new Date().toISOString() }, { onConflict: 'user_id' });
+      await _doSave();
     }
   } catch (e) { console.error('syncWithCloud:', e); }
 }

@@ -1,6 +1,6 @@
 // Velvet Dream Service Worker
 // Bump CACHE_VERSION when you push new code — forces all clients to refresh
-const CACHE_VERSION = 'v26';
+const CACHE_VERSION = 'v27';
 const CACHE_NAME = `velvet-dream-${CACHE_VERSION}`;
 
 const CORE_ASSETS = [
