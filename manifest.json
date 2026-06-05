@@ -2,7 +2,7 @@
   "name": "Velvet Dream",
   "short_name": "Velvet Dream",
   "description": "A space for Kai.",
-  "start_url": "./index.html",
+  "start_url": "./velvet_dream.html",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",

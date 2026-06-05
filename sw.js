@@ -7,8 +7,8 @@ const CORE_ASSETS = [
   './',
   './velvet_dream.html',
   './manifest.json',
-  './icons/icon-192-dark.png',
-  './icons/icon-512-dark.png',
+  './icons/icon-192.png',
+  './icons/icon-512.png',
   './icons/apple-touch-icon.png',
   './rabbit-light.png',
   './rabbit-dark.png'
