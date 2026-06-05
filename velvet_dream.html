@@ -1377,11 +1377,13 @@ async function syncWithCloud() {
       const localDelMems = new Set(state.deletedMemIds || []);
       const cloudDelChats = new Set(cloudData.deletedChatIds || []);
       const cloudDelMems = new Set(cloudData.deletedMemIds || []);
-      // Preserve hydrated voice keys before the spread overwrites them.
+      // Preserve hydrated voice api keys before the spread overwrites them.
+      // (The whole voice object is NOT snapshotted: cloud's voice settings
+      // — voiceId, model, stability, etc. — must flow through from cloud.
+      // ensureVoiceState below re-maps the hydrated apiKeys into voice.providers.*.)
       const hydratedOpenai = state.openaiKey;
       const hydratedEleven = state.elevenLabsKey;
       const hydratedXai = state.xaiKey;
-      const hydratedVoice = state.voice ? JSON.parse(JSON.stringify(state.voice)) : null;
       state = { ...state, ...cloudData };
       state.deletedChatIds = [...new Set([...localDelChats, ...cloudDelChats])];
       state.deletedMemIds = [...new Set([...localDelMems, ...cloudDelMems])];
@@ -1391,7 +1393,6 @@ async function syncWithCloud() {
       if (hydratedOpenai) state.openaiKey = hydratedOpenai;
       if (hydratedEleven) state.elevenLabsKey = hydratedEleven;
       if (hydratedXai) state.xaiKey = hydratedXai;
-      if (hydratedVoice) state.voice = hydratedVoice;
       ensureVoiceState();
       delete state.isStreaming;
       if (saveTimeout) clearTimeout(saveTimeout);
