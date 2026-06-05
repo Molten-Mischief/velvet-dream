@@ -562,7 +562,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">25</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">26</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -931,6 +931,32 @@ async function decryptString(encoded, passphrase, saltStr) {
   }
 }
 
+// Hydrate decrypted keys from cloud data into state. Runs whenever we read cloud,
+// independent of timestamp comparisons. If sessionPassword isn't set yet (session
+// restore without password), this is a no-op — state keeps whatever it had from
+// IndexedDB or defaults.
+async function hydrateEncryptedKeys(cloudData) {
+  if (!sessionPassword || !currentUser || !cloudData) return;
+  const salt = currentUser.id;
+  if (cloudData.apiKeyEnc) {
+    const k = await decryptString(cloudData.apiKeyEnc, sessionPassword, salt);
+    if (k) state.apiKey = k;
+  }
+  if (cloudData.openaiKeyEnc) {
+    const k = await decryptString(cloudData.openaiKeyEnc, sessionPassword, salt);
+    if (k) state.openaiKey = k;
+  }
+  if (cloudData.elevenLabsKeyEnc) {
+    const k = await decryptString(cloudData.elevenLabsKeyEnc, sessionPassword, salt);
+    if (k) state.elevenLabsKey = k;
+  }
+  if (cloudData.xaiKeyEnc) {
+    const k = await decryptString(cloudData.xaiKeyEnc, sessionPassword, salt);
+    if (k) state.xaiKey = k;
+  }
+  ensureVoiceState();
+}
+
 // ===== MODELS =====
 const DEFAULT_MODELS = [
   { id: 'openai/gpt-5.5', name: 'GPT-5.5' },
@@ -1094,40 +1120,34 @@ async function pushToCloud() {
   if (!supabase || !currentUser) return;
   try {
     const { data: cr } = await supabase.from('user_data').select('data').eq('user_id', currentUser.id).single();
-    const cloudTs = cr?.data?.stateTimestamp || 0;
+    const cloudData = cr?.data;
+    // Always hydrate encrypted keys from cloud first, regardless of timestamp.
+    // Encrypted blobs are canonical and only exist in cloud — they need to flow into
+    // state on every read, not just when cloud wins.
+    await hydrateEncryptedKeys(cloudData);
+    const cloudTs = cloudData?.stateTimestamp || 0;
     const localTs = state.stateTimestamp || 0;
     // If cloud is newer than what we have, pull instead of overwriting
     if (cloudTs > localTs) {
       const k = state.apiKey;
-      state = { ...state, ...cr.data };
-      state.apiKey = k; // never let cloud overwrite local-only API key
-      // Decrypt voice keys from cloud if we have a session password
-      if (sessionPassword && currentUser) {
-        const salt = currentUser.id;
-        if (cr.data.openaiKeyEnc) state.openaiKey = await decryptString(cr.data.openaiKeyEnc, sessionPassword, salt);
-        if (cr.data.elevenLabsKeyEnc) state.elevenLabsKey = await decryptString(cr.data.elevenLabsKeyEnc, sessionPassword, salt);
-        if (cr.data.xaiKeyEnc) state.xaiKey = await decryptString(cr.data.xaiKeyEnc, sessionPassword, salt);
-        if (state.voice) {
-          if (state.openaiKey) state.voice.providers.openai.apiKey = state.openaiKey;
-          if (state.elevenLabsKey) state.voice.providers.elevenlabs.apiKey = state.elevenLabsKey;
-          if (state.xaiKey) state.voice.providers.xai.apiKey = state.xaiKey;
-        }
-      }
+      state = { ...state, ...cloudData };
+      state.apiKey = k; // never let cloud overwrite the (now hydrated) apiKey
       delete state.isStreaming;
       if (saveTimeout) clearTimeout(saveTimeout);
       await _doSave();
-      // Re-render visible surfaces
       if (typeof renderChatList === 'function') renderChatList();
       if (typeof renderMessages === 'function') renderMessages();
       if (typeof renderMemoryCards === 'function') renderMemoryCards();
       return;
     }
-    // Local is newer (or equal): push it up. Strip plain API keys, encrypt voice keys.
+    // Local is newer (or equal): push it up. Encrypt all keys, strip plain versions.
     const payload = { ...state };
     delete payload.isStreaming;
-    delete payload.apiKey;
     if (sessionPassword && currentUser) {
       const salt = currentUser.id;
+      // Encrypt all four keys. If a key is missing locally, drop the corresponding
+      // *Enc field too — fall back to whatever was already in cloud (via state spread).
+      if (state.apiKey) payload.apiKeyEnc = await encryptString(state.apiKey, sessionPassword, salt);
       const ok = state.openaiKey || state.voice?.providers?.openai?.apiKey || '';
       const elk = state.elevenLabsKey || state.voice?.providers?.elevenlabs?.apiKey || '';
       const xk = state.xaiKey || state.voice?.providers?.xai?.apiKey || '';
@@ -1135,7 +1155,8 @@ async function pushToCloud() {
       if (elk) payload.elevenLabsKeyEnc = await encryptString(elk, sessionPassword, salt);
       if (xk) payload.xaiKeyEnc = await encryptString(xk, sessionPassword, salt);
     }
-    // Never store plain voice keys in cloud
+    // Strip all plain keys before upload — cloud only holds encrypted blobs
+    delete payload.apiKey;
     delete payload.openaiKey;
     delete payload.elevenLabsKey;
     delete payload.xaiKey;
@@ -1176,14 +1197,20 @@ async function manualSync() {
 
 // Bidirectional sync: compare timestamps, newest wins for whole state.
 // Deletion lists are always unioned so deletes never get resurrected.
+// Encrypted keys are hydrated from cloud first, before any merge logic — they
+// live canonically in cloud and need to flow into state on every read.
 async function syncWithCloud() {
   if (!supabase || !currentUser) return;
   try {
     const { data: cr } = await supabase.from('user_data').select('data').eq('user_id', currentUser.id).single();
     const cloudData = cr?.data || null;
+    // Always hydrate encrypted keys first, before timestamp gates and state spread.
+    // If sessionPassword is missing (session restore without password), this is a no-op
+    // and state keeps whatever it had from IndexedDB.
+    await hydrateEncryptedKeys(cloudData);
     const cloudTs = cloudData?.stateTimestamp || 0;
     const localTs = state.stateTimestamp || 0;
-    const k = state.apiKey;
+    const k = state.apiKey; // save the (possibly hydrated) apiKey
 
     if (cloudData && cloudTs > localTs) {
       // Cloud wins. Adopt cloud state, but union deletion lists so any local
@@ -1192,21 +1219,25 @@ async function syncWithCloud() {
       const localDelMems = new Set(state.deletedMemIds || []);
       const cloudDelChats = new Set(cloudData.deletedChatIds || []);
       const cloudDelMems = new Set(cloudData.deletedMemIds || []);
+      // Preserve hydrated voice keys before the spread overwrites them with cloud's
+      // (cloud has the encrypted blobs, not plain — but we already decrypted them).
+      const hydratedOpenai = state.openaiKey;
+      const hydratedEleven = state.elevenLabsKey;
+      const hydratedXai = state.xaiKey;
+      const hydratedVoice = state.voice ? JSON.parse(JSON.stringify(state.voice)) : null;
       state = { ...state, ...cloudData };
       state.deletedChatIds = [...new Set([...localDelChats, ...cloudDelChats])];
       state.deletedMemIds = [...new Set([...localDelMems, ...cloudDelMems])];
-      // Apply deletions to current arrays (in case cloud had items we already deleted locally)
       state.chats = (state.chats || []).filter(c => !state.deletedChatIds.includes(c.id));
       state.memories = (state.memories || []).filter(m => !state.deletedMemIds.includes(m.id));
-      state.apiKey = k;
-      // Decrypt voice keys from encrypted cloud blobs
-      if (sessionPassword && currentUser) {
-        const salt = currentUser.id;
-        if (cloudData.openaiKeyEnc) state.openaiKey = await decryptString(cloudData.openaiKeyEnc, sessionPassword, salt);
-        if (cloudData.elevenLabsKeyEnc) state.elevenLabsKey = await decryptString(cloudData.elevenLabsKeyEnc, sessionPassword, salt);
-        if (cloudData.xaiKeyEnc) state.xaiKey = await decryptString(cloudData.xaiKeyEnc, sessionPassword, salt);
-        ensureVoiceState();
-      }
+      state.apiKey = k; // restore hydrated apiKey
+      // Restore the hydrated voice keys (cloud doesn't have plain versions to overwrite,
+      // but if state.voice was spread in from cloud, the providers.*.apiKey would be empty).
+      if (hydratedOpenai) state.openaiKey = hydratedOpenai;
+      if (hydratedEleven) state.elevenLabsKey = hydratedEleven;
+      if (hydratedXai) state.xaiKey = hydratedXai;
+      if (hydratedVoice) state.voice = hydratedVoice;
+      ensureVoiceState();
       delete state.isStreaming;
       if (saveTimeout) clearTimeout(saveTimeout);
       await _doSave();
@@ -1222,10 +1253,10 @@ async function syncWithCloud() {
       }
       const payload = { ...state };
       delete payload.isStreaming;
-      delete payload.apiKey;
-      // Encrypt voice keys before upload, strip plain versions
+      // Encrypt all four keys before upload (apiKey + 3 voice keys), strip plain versions
       if (sessionPassword && currentUser) {
         const salt = currentUser.id;
+        if (state.apiKey) payload.apiKeyEnc = await encryptString(state.apiKey, sessionPassword, salt);
         const ok = state.openaiKey || state.voice?.providers?.openai?.apiKey || '';
         const elk = state.elevenLabsKey || state.voice?.providers?.elevenlabs?.apiKey || '';
         const xk = state.xaiKey || state.voice?.providers?.xai?.apiKey || '';
@@ -1233,6 +1264,8 @@ async function syncWithCloud() {
         if (elk) payload.elevenLabsKeyEnc = await encryptString(elk, sessionPassword, salt);
         if (xk) payload.xaiKeyEnc = await encryptString(xk, sessionPassword, salt);
       }
+      // Always strip plain keys before upload — cloud only ever holds encrypted blobs
+      delete payload.apiKey;
       delete payload.openaiKey;
       delete payload.elevenLabsKey;
       delete payload.xaiKey;
