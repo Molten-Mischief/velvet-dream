@@ -550,6 +550,20 @@ html, body {
   <button class="login-offline-btn" onclick="enterOfflineMode()">Use offline (no sync)</button>
 </div>
 
+<!-- UNLOCK KEYS MODAL (shown on silent session restore when encrypted blobs exist) -->
+<div class="login-screen hidden" id="unlockKeysScreen">
+  <div class="login-logo">Velvet Dream</div>
+  <div class="login-sub">unlock keys</div>
+  <div class="login-form">
+    <div style="font-size:13px;color:var(--text-muted);line-height:1.5;margin-bottom:6px;text-align:center">
+      Enter your login password to decrypt your saved API keys.
+    </div>
+    <input class="login-input" type="password" id="unlockKeysPassword" placeholder="Login password" autocomplete="current-password">
+    <div class="login-error" id="unlockKeysError"></div>
+    <button class="login-btn" id="unlockKeysBtn" onclick="submitUnlockKeys()">Unlock</button>
+  </div>
+</div>
+
 <div class="sidebar" id="sidebar">
   <div class="sidebar-header"><h2>Conversations</h2><button class="new-chat-btn" onclick="newChat()">+</button></div>
   <div class="chat-list" id="chatList"></div>
@@ -562,7 +576,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">27</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">28</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -930,6 +944,92 @@ async function decryptString(encoded, passphrase, saltStr) {
     return ''; // wrong password or corrupted — treat as empty
   }
 }
+
+// ===== UNLOCK KEYS PROMPT =====
+// On silent session restore (auth.getSession returning a user without the user
+// typing their password), sessionPassword stays null and every encrypt/decrypt
+// call silently uses the literal "null" — producing blobs only readable by
+// other null-password sessions. This prompts for the password whenever the
+// app starts with restored auth + encrypted blobs in cloud, verifies it by
+// attempting to decrypt one of the existing blobs, and hard-blocks until a
+// password that decrypts is entered.
+let _unlockKeysResolver = null;
+
+function cloudHasEncryptedBlobs(cloudData) {
+  if (!cloudData) return false;
+  return !!(cloudData.apiKeyEnc || cloudData.openaiKeyEnc || cloudData.elevenLabsKeyEnc || cloudData.xaiKeyEnc);
+}
+
+// Attempt to decrypt any one of the encrypted blobs. Returns true if at least
+// one decrypts non-empty (i.e. password is correct for at least one blob).
+async function verifyPasswordAgainstBlobs(password, cloudData) {
+  if (!cloudData || !currentUser) return false;
+  const salt = currentUser.id;
+  const blobs = [
+    cloudData.apiKeyEnc,
+    cloudData.openaiKeyEnc,
+    cloudData.elevenLabsKeyEnc,
+    cloudData.xaiKeyEnc,
+  ].filter(Boolean);
+  for (const blob of blobs) {
+    const result = await decryptString(blob, password, salt);
+    if (result) return true;
+  }
+  return false;
+}
+
+// Show the unlock modal, capture password, verify, resolve with password.
+// Resolves only on a verified password — caller will set sessionPassword.
+// Never resolves on wrong password (modal stays open, user retries).
+function promptForKeyUnlock(cloudData) {
+  return new Promise((resolve) => {
+    _unlockKeysResolver = async (password) => {
+      const errEl = document.getElementById('unlockKeysError');
+      const btn = document.getElementById('unlockKeysBtn');
+      errEl.textContent = '';
+      btn.disabled = true;
+      btn.textContent = 'Checking…';
+      const ok = await verifyPasswordAgainstBlobs(password, cloudData);
+      btn.disabled = false;
+      btn.textContent = 'Unlock';
+      if (!ok) {
+        errEl.textContent = 'Wrong password. Try again.';
+        document.getElementById('unlockKeysPassword').value = '';
+        document.getElementById('unlockKeysPassword').focus();
+        return;
+      }
+      document.getElementById('unlockKeysPassword').value = '';
+      document.getElementById('unlockKeysScreen').classList.add('hidden');
+      _unlockKeysResolver = null;
+      resolve(password);
+    };
+    // Show modal
+    const screen = document.getElementById('unlockKeysScreen');
+    document.getElementById('unlockKeysPassword').value = '';
+    document.getElementById('unlockKeysError').textContent = '';
+    screen.classList.remove('hidden');
+    setTimeout(() => document.getElementById('unlockKeysPassword').focus(), 100);
+  });
+}
+
+function submitUnlockKeys() {
+  const pw = document.getElementById('unlockKeysPassword').value;
+  if (!pw) {
+    document.getElementById('unlockKeysError').textContent = 'Enter your password.';
+    return;
+  }
+  if (_unlockKeysResolver) _unlockKeysResolver(pw);
+}
+
+// Submit on Enter key
+document.addEventListener('DOMContentLoaded', () => {
+  const pwInput = document.getElementById('unlockKeysPassword');
+  if (pwInput) {
+    pwInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submitUnlockKeys();
+    });
+  }
+});
 
 // Hydrate decrypted keys from cloud data into state. Runs whenever we read cloud,
 // independent of timestamp comparisons. If sessionPassword isn't set yet (session
@@ -4619,6 +4719,20 @@ function setupMobileInfoBarPin() {
         currentUser = session.user;
         document.getElementById('logoutBtn').style.display = 'flex';
         document.getElementById('syncBtn').style.display = 'flex';
+        // Session restored silently — sessionPassword is null. If cloud has any
+        // encrypted blobs, prompt for password before syncing. Otherwise any
+        // encrypt/decrypt that happens during sync will use the literal "null"
+        // as the passphrase and produce blobs only readable by other null-password
+        // sessions. Hard block — no sync until verified password is in memory.
+        try {
+          const { data: cr } = await supabase.from('user_data').select('data').eq('user_id', currentUser.id).single();
+          if (cloudHasEncryptedBlobs(cr?.data)) {
+            const pw = await promptForKeyUnlock(cr.data);
+            if (pw) sessionPassword = pw;
+          }
+        } catch (e) {
+          console.log('unlock check:', e);
+        }
         // Now sync: local was loaded above, so this is a real comparison.
         await syncWithCloud();
         enterApp();
