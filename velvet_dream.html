@@ -575,7 +575,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v35</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v35a</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -1892,7 +1892,7 @@ name — A short name for what this memory is about. 3-8 words. Concrete, not ab
 content — A third-person narrative of what happened. 3-6 sentences. Use names (${userName}, ${aiName}). Include:
 - What was being discussed or happening
 - The concrete details that matter (things said, things made, decisions reached, specifics named)
-- Any plans, commitments, or decisions about future actions
+- Any plans, commitments, or decisions about future actions, if there were any
 - The emotional and relational texture of the moment — describe it, don't interpret it
 - What shifted, was exchanged, or was created
 
@@ -2213,18 +2213,8 @@ async function getRelevantMemoriesBySemantics(msg, filterCardIds = null, customC
       filter_card_ids: filterCardIds
     });
     if (error) {
-      console.warn('Multi-dim match failed, will retry single-dim:', error);
-      // Fallback: try the legacy RPC if the new one isn't installed yet
-      const { data: legacyData, error: legacyError } = await supabase.rpc('match_memories', {
-        query_embedding: queryEmbeddings.query_content,
-        match_threshold: threshold,
-        match_count: 20
-      });
-      if (legacyError) {
-        console.warn('Legacy match also failed:', legacyError);
-        return null;
-      }
-      return resolveMatchedCards(legacyData || [], max);
+      console.warn('Multi-dim match failed:', error);
+      return null;
     }
     return resolveMatchedCards(data || [], max);
   } catch (e) {
@@ -2397,41 +2387,49 @@ function closeThreadDetail() {
 // full recent window and can spend a model call.
 function getThreadMatchTerms(thread) {
   const terms = [];
-  if (thread?.name) terms.push(...String(thread.name).toLowerCase().split(/\W+/).filter(w => w.length >= 3));
+  if (thread?.name) terms.push(String(thread.name).toLowerCase().trim());
   if (Array.isArray(thread?.keywords)) {
     for (const k of thread.keywords) {
       const clean = String(k || '').toLowerCase().trim();
       if (clean.length >= 3) terms.push(clean);
-      terms.push(...clean.split(/\W+/).filter(w => w.length >= 3));
     }
   }
   return [...new Set(terms)].filter(Boolean);
 }
 
-function fastThreadMaintenance(chat, recentText) {
+function fastThreadMaintenance(chat) {
   if (!chat || !chat.threads || !chat.threads.length) return;
   const windowSize = state.contextMessages || 8;
   const archiveAfter = Math.max(1, Math.floor(windowSize / 2));
   const turnCount = chat.messages.length;
-  const haystack = (recentText || '').toLowerCase();
+
+  // Active threads check against last 2 messages (your last + Kai's last)
+  const lastTwo = (chat.messages || [])
+    .slice(-2)
+    .map(m => typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.filter(b => b.type === 'text').map(b => b.text).join(' ') : ''))
+    .join(' ')
+    .toLowerCase();
+
+  const wordMatch = (term, text) => {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`\\b${escaped}\\b`, 'i').test(text);
+  };
 
   for (const t of chat.threads) {
     if (!t.archived) {
-      // ARCHIVE PASS
-      const turnsSinceTouch = turnCount - (t.lastTouchedTurn || turnCount);
-      if (turnsSinceTouch >= archiveAfter) {
-        t.archived = true;
-        // Last shot at promotion before going silent.
-        promoteThreadIfPortable(t, chat).catch(e => console.warn('Archive promotion failed:', e));
-      }
-    } else {
-      // REACTIVATION PASS: keywords and name-words only. No merging here.
-      const matched = getThreadMatchTerms(t).some(term => haystack.includes(term));
+      const matched = getThreadMatchTerms(t).some(term => wordMatch(term, lastTwo));
       if (matched) {
-        t.archived = false;
         t.lastTouchedTurn = turnCount;
+      } else {
+        const turnsSinceTouch = turnCount - (t.lastTouchedTurn || turnCount);
+        if (turnsSinceTouch >= archiveAfter) {
+          t.archived = true;
+          // Last shot at promotion before going silent.
+          promoteThreadIfPortable(t, chat).catch(e => console.warn('Archive promotion failed:', e));
+        }
       }
     }
+    // Archived threads: reactivation handled by reactivateThreadsByWordMatch (current message) and the semantic pass.
   }
 }
 
@@ -2443,17 +2441,11 @@ async function buildApiMessages(chat, userContent) {
     : 'You are a helpful assistant.';
   messages.push({ role: 'system', content: sysContent });
 
-  // FAST THREAD MAINTENANCE (#1): archive silent threads, reactivate matched
-  // ones — before we read the thread list to build the prompt. Match against
-  // the recent transcript plus the incoming user message.
-  const incomingText = typeof userContent === 'string'
-    ? userContent
-    : (userContent.find(c => c.type === 'text')?.text || '');
-  const recentForMatch = (chat.messages || [])
-    .slice(-(state.contextMessages || 8))
-    .map(m => typeof m.content === 'string' ? m.content : (Array.isArray(m.content) ? m.content.filter(b => b.type === 'text').map(b => b.text).join(' ') : ''))
-    .join(' ') + ' ' + incomingText;
-  fastThreadMaintenance(chat, recentForMatch);
+  // FAST THREAD MAINTENANCE: active threads bump touch-counter if their
+  // keywords appear in the last 2 messages; otherwise age out after 4 silent
+  // turns. Archived threads reactivate via reactivateThreadsByWordMatch
+  // (current message) and the semantic pass in updateSessionThreads.
+  fastThreadMaintenance(chat);
 
   // Session state: inject active threads so the model knows what's currently in flight.
   // Threads are inferred and updated in the background — see updateSessionThreads().
@@ -3148,9 +3140,13 @@ function reactivateThreadsByWordMatch(chat, userText) {
   if (!text.trim()) return false;
   let reactivated = false;
   const turnCount = chat.messages ? chat.messages.length : 0;
+  const wordMatch = (term) => {
+    const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return new RegExp(`\\b${escaped}\\b`, 'i').test(text);
+  };
   for (const t of chat.threads) {
     if (!t.archived) continue;
-    const referenced = getThreadMatchTerms(t).some(term => text.includes(term));
+    const referenced = getThreadMatchTerms(t).some(wordMatch);
     if (referenced) {
       t.archived = false;
       t.lastTouchedTurn = turnCount;
@@ -3357,7 +3353,7 @@ Do not close existing threads. Unchanged threads should be returned unchanged wi
 
 If a thread is marked needsReconcile:true, its summary may be out of date because the conversation was edited. Revise it only as needed using the recent conversation.
 
-For each thread, provide 3-5 short lowercase keywords or phrases someone might use to bring the same concrete subject back later.
+For each thread, provide an array of 3-5 lowercase words or short phrases (1-2 words) that name the specific subjects, objects, and proper nouns in this thread for retrieval. Choose words someone would type when searching for this thread specifically. Not emotional descriptors. Not "kai" or "monica".
 
 Return ONLY a JSON object with a "threads" array, no preamble, no markdown:
 {"threads": [{"id": "preserve existing IDs whenever possible", "name": "short concrete subject name", "kind": "thread kind if known", "archived": false, "summary": "prose record of what was said, what happened, and what was decided or planned", "keywords": ["keyword", "phrase"]}]}`;
@@ -3569,26 +3565,25 @@ async function promoteThreadIfPortable(thread, chat) {
     existing.updatedAt = Date.now();
     embedAndStoreCard(existing).catch(e => console.warn('Re-promotion embed failed:', e));
   } else {
-    // First promotion for this thread — create new card(s).
-    for (const c of cards) {
-      const card = {
-        id: 'mem_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
-        name: c.name.slice(0, 200),
-        content: c.content,
-        keywords: c.keywords || [],
-        tags: Array.isArray(c.tags) ? c.tags : [],
-        enabled: true,
-        pinned: false,
-        capturedAt: Date.now(),
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        autoCapture: true,
-        sourceThread: thread.id,
-        sourceChat: chat?.id
-      };
-      state.memories.push(card);
-      embedAndStoreCard(card).catch(e => console.warn('Promotion embed failed:', e));
-    }
+    // First promotion for this thread — one card per thread.
+    const c = cards[0];
+    const card = {
+      id: 'mem_' + Date.now() + '_' + Math.random().toString(36).slice(2, 7),
+      name: c.name.slice(0, 200),
+      content: c.content,
+      keywords: c.keywords || [],
+      tags: Array.isArray(c.tags) ? c.tags : [],
+      enabled: true,
+      pinned: false,
+      capturedAt: Date.now(),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      autoCapture: true,
+      sourceThread: thread.id,
+      sourceChat: chat?.id
+    };
+    state.memories.push(card);
+    embedAndStoreCard(card).catch(e => console.warn('Promotion embed failed:', e));
   }
   saveState();
   renderMemoryCards();
