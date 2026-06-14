@@ -575,7 +575,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v35a</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v36</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -2259,7 +2259,11 @@ async function getRelevantMemories(msg) {
   // keyword match — split message into words, check each against keywords
   const keywordMatched = state.memories.filter(mem => {
     if (mem.enabled === false || mem.pinned) return false;
-    return (mem.keywords || []).map(norm).some(kw => kw && msgWords.some(word => kw.includes(word)));
+    return (mem.keywords || []).some(kw => {
+      const k = norm(kw);
+      if (!k) return false;
+      return msgWords.some(word => new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(k));
+    });
   });
 
   const pinned = state.memories.filter(m => m.pinned);
@@ -3356,7 +3360,7 @@ If a thread is marked needsReconcile:true, its summary may be out of date becaus
 For each thread, provide an array of 3-5 lowercase words or short phrases (1-2 words) that name the specific subjects, objects, and proper nouns in this thread for retrieval. Choose words someone would type when searching for this thread specifically. Not emotional descriptors. Not "kai" or "monica".
 
 Return ONLY a JSON object with a "threads" array, no preamble, no markdown:
-{"threads": [{"id": "preserve existing IDs whenever possible", "name": "short concrete subject name", "kind": "thread kind if known", "archived": false, "summary": "prose record of what was said, what happened, and what was decided or planned", "keywords": ["keyword", "phrase"]}]}`;
+{"threads": [{"id": "preserve existing IDs whenever possible", "name": "short concrete subject name", "kind": "thread kind if known", "archived": false, "summary": "take the thread's existing summary and add the new events from the recent conversation to the end of it — what was said and what happened, any decisions or plans if there were any, and the emotional texture (what a moment meant, the care or tension or playfulness underneath it) if there was any. Preserve everything already in the summary; do not rewrite or condense it. If there is no existing summary, this is the first entry.", "keywords": ["keyword", "phrase"]}]}`;
 
   let parsed = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
