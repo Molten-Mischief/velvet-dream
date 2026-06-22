@@ -575,7 +575,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v36</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v36a</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -2369,7 +2369,10 @@ function openThreadDetail(idx) {
   const modal = document.getElementById('threadDetailModal');
   document.getElementById('threadDetailTitle').textContent = t.name || 'Thread';
   document.getElementById('threadDetailStatus').textContent = '';
-  document.getElementById('threadDetailFields').innerHTML = archivedTag + summaryHtml;
+  const kwHtml = (t.keywords || []).length
+    ? `<div style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:8px">${t.keywords.map(k => `<span style="background:var(--bg-hover);color:var(--text-muted);padding:2px 8px;border-radius:10px;font-size:10px">${escapeHtml(k)}</span>`).join('')}</div>`
+    : `<div style="color:var(--text-muted);font-size:11px;font-style:italic;margin-bottom:8px">no keywords</div>`;
+  document.getElementById('threadDetailFields').innerHTML = archivedTag + kwHtml + summaryHtml;
   document.getElementById('threadDetailDelete').onclick = () => {
     if (!confirm(`Close the "${t.name}" thread? Kai won't track it going forward.`)) return;
     chat.threads.splice(idx, 1);
@@ -4170,7 +4173,8 @@ function renderMemoryCards() {
         </div>
       </div>
       <div style="font-size:11.5px;color:var(--text-secondary);line-height:1.5;margin-top:4px">${escapeHtml(preview)}${previewSuffix}</div>
-      <div class="memory-card-meta" style="margin-top:6px">${dateStr ? dateStr + ' · ' : ''}~${tok} tokens${mem.pinned ? ' · Pinned' : ''}</div>`;
+      <div class="memory-card-meta" style="margin-top:6px">${dateStr ? dateStr + ' · ' : ''}~${tok} tokens${mem.pinned ? ' · Pinned' : ''}</div>
+      ${(mem.keywords || []).length ? `<div class="memory-card-keywords" style="margin-top:5px">${mem.keywords.map(k => `<span>${escapeHtml(k)}</span>`).join('')}</div>` : ''}`;
     list.appendChild(card);
   });
 }
