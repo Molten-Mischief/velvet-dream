@@ -575,7 +575,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v36b</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v36c</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -2257,6 +2257,7 @@ async function getRelevantMemories(msg) {
   const msgWords = mn.split(/\W+/).filter(w => w.length > 1);
 
   // keyword match — split message into words, check each against keywords
+  console.log('[KW]', 'words:', msgWords, '| cards:', state.memories.map(m => ({ name: m.name, enabled: m.enabled, kw: m.keywords })));
   const keywordMatched = state.memories.filter(mem => {
     if (mem.enabled === false || mem.pinned) return false;
     return (mem.keywords || []).some(kw => {
@@ -2277,18 +2278,18 @@ async function getRelevantMemories(msg) {
   }
 
   // PATH 1: enough keyword matches to fill all slots —
-  // rank by how many of the card's keywords matched message words; more matches = higher priority
+  // semantic runs ONLY on those cards, returns best ranked ones
   if (keywordMatched.length >= rem) {
-    const kwHits = kw => {
-      const k = norm(kw);
-      return k && msgWords.some(word => new RegExp(`\\b${word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, 'i').test(k));
-    };
-    const ranked = keywordMatched
-      .filter(c => !pinnedIds.has(c.id))
-      .map(c => ({ card: c, score: (c.keywords || []).filter(kwHits).length }))
-      .sort((a, b) => b.score - a.score)
-      .map(x => x.card);
-    return [...pinned, ...ranked.slice(0, rem)];
+    const cardIds = keywordMatched.map(c => c.id);
+    const scored = await getRelevantMemoriesBySemantics(msg, cardIds, rem);
+    if (scored === null) {
+      // semantic failed — return keyword matches directly
+      return [...pinned, ...keywordMatched.filter(c => !pinnedIds.has(c.id)).slice(0, rem)];
+    }
+    const scoredIds = new Set(scored.map(c => c.id));
+    // any keyword matches semantic didn't score (below threshold) — append as fallback
+    const unscored = keywordMatched.filter(c => !scoredIds.has(c.id) && !pinnedIds.has(c.id));
+    return [...pinned, ...[...scored, ...unscored].slice(0, rem)];
   }
 
   // PATH 2: keyword matches < max — all guaranteed, semantic on all cards fills rest
