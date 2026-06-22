@@ -575,7 +575,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v36c</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v36d</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -2257,7 +2257,6 @@ async function getRelevantMemories(msg) {
   const msgWords = mn.split(/\W+/).filter(w => w.length > 1);
 
   // keyword match — split message into words, check each against keywords
-  console.log('[KW]', 'words:', msgWords, '| cards:', state.memories.map(m => ({ name: m.name, enabled: m.enabled, kw: m.keywords })));
   const keywordMatched = state.memories.filter(mem => {
     if (mem.enabled === false || mem.pinned) return false;
     return (mem.keywords || []).some(kw => {
