@@ -320,8 +320,8 @@ html, body {
 .message:hover .message-actions { opacity: 1; }
 .msg-action-btn {
   background: none; border: none; color: var(--text-muted); cursor: pointer;
-  font-size: 12px; padding: 3px 6px; border-radius: 4px; transition: all 0.15s;
-  display: flex; align-items: center; gap: 3px; font-family: 'DM Sans', sans-serif;
+  font-size: 12px; padding: 5px 7px; border-radius: 4px; transition: all 0.15s;
+  display: flex; align-items: center; justify-content: center; gap: 3px; font-family: 'DM Sans', sans-serif;
 }
 .msg-action-btn:hover { color: var(--accent); background: var(--accent-subtle); }
 .msg-action-btn.copied { color: var(--success); }
@@ -390,7 +390,7 @@ html, body {
 .cc-dot.active { background: var(--accent); }
 .cc-stage { position: relative; }
 .cc-card { display: none; }
-.cc-card.active { display: block; animation: cc-fade 0.22s ease; }
+.cc-card.active { display: block; animation: cc-fade 0.22s ease; background: var(--bg-secondary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 14px; }
 @keyframes cc-fade { from { opacity: 0; transform: translateX(6px); } to { opacity: 1; transform: translateX(0); } }
 
 /* Theme preview swatches */
@@ -480,9 +480,9 @@ html, body {
 .modal-header h3 { font-family: 'Libre Baskerville', serif; font-size: 16px; font-weight: 400; }
 .modal-close { background: none; border: none; color: var(--text-muted); font-size: 20px; cursor: pointer; padding: 4px; }
 .modal-close:hover { color: var(--text-primary); }
-.modal-body { padding: 20px; }
-.form-group { margin-bottom: 20px; }
-.form-group label { display: block; font-size: 12px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 8px; }
+.modal-body { padding: 16px; }
+.form-group { margin-bottom: 12px; }
+.form-group label { display: block; font-size: 12px; font-weight: 500; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 5px; }
 .form-group input, .form-group textarea, .form-group select {
   width: 100%; padding: 10px 14px; background: var(--bg-tertiary);
   border: 1px solid var(--border); border-radius: var(--radius-sm);
@@ -497,7 +497,7 @@ html, body {
 .toggle-visibility { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 16px; padding: 4px; }
 .section-divider {
   font-size: 12px; font-weight: 500; color: var(--accent-dim); text-transform: uppercase;
-  letter-spacing: 0.08em; padding: 16px 0 8px; margin-top: 8px; border-top: 1px solid var(--border);
+  letter-spacing: 0.08em; padding: 12px 0 6px; margin-top: 8px; border-top: 1px solid var(--border);
   display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
 }
 .section-divider .toggle-arrow { font-size: 10px; transition: transform 0.2s; }
@@ -505,9 +505,9 @@ html, body {
 .section-divider .toggle-arrow.collapsed { transform: rotate(-90deg); }
 .collapsible-section { overflow: hidden; transition: max-height 0.3s ease; max-height: 2000px; }
 .collapsible-section.collapsed { max-height: 0; }
-.slider-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 14px; }
+.slider-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-bottom: 10px; }
 .slider-row label { font-size: 11px; font-weight: 500; color: var(--text-secondary); min-width: 110px; text-transform: none; letter-spacing: 0; margin-bottom: 0; }
-.slider-row input[type="range"] { flex: 1; min-width: 100px; -webkit-appearance: none; appearance: none; height: 4px; background: var(--border); border-radius: 2px; outline: none; border: none; padding: 0; }
+.slider-row input[type="range"] { flex: 1; min-width: 100px; -webkit-appearance: none; appearance: none; height: 4px; background: var(--border); border-radius: 2px; outline: none; border: none; padding: 0; touch-action: pan-y; }
 .slider-row input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; background: var(--accent); border-radius: 50%; cursor: pointer; }
 .slider-row .slider-val { font-family: 'JetBrains Mono', monospace; font-size: 18px; font-weight: 700; color: var(--accent); width: 100%; text-align: center; margin-top: 2px; }
 .custom-model-row { display: flex; gap: 8px; margin-bottom: 8px; align-items: center; }
@@ -542,6 +542,12 @@ html, body {
 .settings-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .memory-card { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px; margin-bottom: 8px; transition: all 0.15s; }
 .memory-card:hover { border-color: var(--border-light); }
+/* Scrollable list so a long set of cards never gets clipped by the section's max-height. */
+#memoryCardsList { max-height: 320px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+/* Tap-to-expand: card face shows title + keywords; content reveals on tap. */
+.memory-card.tappable { cursor: pointer; }
+.memory-card-content { display: none; font-size: 11.5px; color: var(--text-secondary); line-height: 1.5; margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--border); white-space: pre-wrap; }
+.memory-card.expanded .memory-card-content { display: block; }
 .memory-card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
 .memory-card-name { font-size: 13px; font-weight: 600; color: var(--accent); }
 .memory-card-meta { font-size: 10px; color: var(--text-muted); }
@@ -624,7 +630,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v36i</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v36j</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -689,20 +695,19 @@ html, body {
           <div class="form-group"><label>AI Name</label><input type="text" id="aiLabelInput" placeholder="Kai"></div>
         </div>
       </div>
-      <div class="section-divider" onclick="toggleSection('systemPromptSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> System Prompt</div>
+      <div class="section-divider" onclick="toggleSection('systemPromptSection',this)"><span class="toggle-arrow collapsed">▼</span> System Prompt</div>
       <div class="collapsible-section collapsed" id="systemPromptSection">
         <div style="padding-top:12px">
           <div class="form-group"><label>System Prompt</label><textarea id="systemPromptInput" placeholder="Paste your character's behavioral charter here..."></textarea><div class="hint" id="systemPromptTokens"></div></div>
         </div>
       </div>
-      <div class="section-divider" onclick="toggleSection('memoryCardsSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> Memory Cards</div>
+      <div class="section-divider" onclick="toggleSection('memoryCardsSection',this)"><span class="toggle-arrow collapsed">▼</span> Memory Cards</div>
       <div class="collapsible-section collapsed" id="memoryCardsSection">
         <div style="padding-top:12px">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
             <label style="font-size:12px;font-weight:500;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin:0">Memory Cards</label>
             <button class="add-btn" style="width:auto;padding:6px 14px;font-size:11px" onclick="openMemoryEditor(null)">+ New</button>
           </div>
-          <div class="hint" style="margin-bottom:12px">Memories load by semantic similarity to your message. Pinned ones always load.</div>
           <div class="form-group" style="margin-bottom:12px">
             <label>Search Memory Cards</label>
             <input type="search" id="memorySearchInput" placeholder="Search title, context, or keywords..." oninput="renderMemoryCards()">
@@ -711,16 +716,15 @@ html, body {
           <div class="section-divider" onclick="toggleSection('memMigrateSection',this)" style="margin-top:8px"><span class="toggle-arrow collapsed">▼</span> Regenerate Keywords & Vectors</div>
           <div class="collapsible-section collapsed" id="memMigrateSection">
             <div style="padding-top:12px">
-              <div class="hint" style="margin-bottom:10px">Regenerates keywords and vectors for all cards. Does not change card names, content, IDs, pin, or enabled flags.</div>
               <button class="action-btn" style="width:100%" onclick="regenerateKeywordsAndVectors()">Regenerate keywords & vectors</button>
             </div>
           </div>
         </div>
       </div>
-      <div class="section-divider" onclick="toggleSection('userPrefsSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> User Preferences</div>
+      <div class="section-divider" onclick="toggleSection('userPrefsSection',this)"><span class="toggle-arrow collapsed">▼</span> User Preferences</div>
       <div class="collapsible-section collapsed" id="userPrefsSection">
         <div style="padding-top:12px">
-          <div class="form-group"><label>User Preferences</label><textarea id="userPrefsInput" placeholder="How you'd like Kai to relate to you — tone, pacing, things to lean into or avoid."></textarea><div class="hint">Coming soon — a dedicated space for your relational preferences.</div></div>
+          <div class="form-group"><label>User Preferences</label><textarea id="userPrefsInput" placeholder="How you'd like Kai to relate to you — tone, pacing, things to lean into or avoid."></textarea></div>
         </div>
       </div>
       <button class="save-btn" onclick="saveSettings()">Save Injections</button>
@@ -740,14 +744,12 @@ html, body {
             <div class="cc-dots"></div>
             <div class="cc-stage">
               <div class="cc-card" data-cc-value="openrouter" data-cc-label="OpenRouter">
-                <div class="form-group"><label>OpenRouter API Key</label><div class="api-key-wrapper"><input type="password" id="apiKeyInput" placeholder="sk-or-v1-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleApiVis()">👁</button></div><div class="hint">Stored only on your device.</div></div>
+                <div class="form-group"><label>OpenRouter API Key</label><div class="api-key-wrapper"><input type="password" id="apiKeyInput" placeholder="sk-or-v1-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleApiVis()">👁</button></div></div>
                 <div class="form-group">
                   <label>Model</label>
                   <select class="form-select" id="modelSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b5f52' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;padding-right:36px"></select>
-                  <div class="hint">Switch models anytime. Your system prompt carries over.</div>
                 </div>
                 <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
-                  <div class="hint" style="margin-bottom:10px">Add your own — format: provider/model</div>
                   <div id="customModelsList"></div>
                   <button class="add-btn" onclick="addCustomModelRow()">+ Add model</button>
                 </div>
@@ -755,14 +757,13 @@ html, body {
               <div class="cc-card" data-cc-value="add" data-cc-label="+ Add provider">
                 <div style="text-align:center;padding:24px 16px;color:var(--text-muted)">
                   <div style="font-size:28px;margin-bottom:10px;color:var(--text-secondary)">+</div>
-                  <div class="hint">More providers are coming. Soon you'll be able to paste any provider's key here and the app will detect it automatically.</div>
                 </div>
               </div>
             </div>
           </div>
         </div>
       </div>
-      <div class="section-divider" onclick="toggleSection('voiceSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> Voice (Listen)</div>
+      <div class="section-divider" onclick="toggleSection('voiceSection',this)"><span class="toggle-arrow collapsed">▼</span> Voice (Listen)</div>
       <div class="collapsible-section collapsed" id="voiceSection">
         <div style="padding-top:12px">
           <div class="card-carousel" id="voiceCarousel">
@@ -774,14 +775,12 @@ html, body {
             <div class="cc-dots"></div>
             <div class="cc-stage">
               <div class="cc-card" data-cc-value="browser" data-cc-label="Browser">
-                <div class="hint" style="margin-bottom:12px">Uses the built-in voice on this device. No API key needed.</div>
               </div>
 
               <div class="cc-card" data-cc-value="openai" data-cc-label="OpenAI">
                 <div class="form-group">
                   <label>OpenAI API Key (for voice only)</label>
                   <div class="api-key-wrapper"><input type="password" id="openaiKeyInput" placeholder="sk-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleOpenaiKeyVis()">👁</button></div>
-                  <div class="hint">Separate from OpenRouter. Used only for text-to-speech.</div>
                 </div>
                 <div class="voice-grid">
                   <div class="form-group">
@@ -812,7 +811,6 @@ html, body {
                 <div class="form-group">
                   <label>ElevenLabs API Key</label>
                   <div class="api-key-wrapper"><input type="password" id="elevenLabsKeyInput" placeholder="xi-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleElevenLabsKeyVis()">👁</button></div>
-                  <div class="hint">Paste once, then switch providers without re-entering it.</div>
                 </div>
                 <div class="form-group">
                   <label>ElevenLabs Voice ID</label>
@@ -848,7 +846,6 @@ html, body {
                 <div class="form-group">
                   <label>xAI API Key</label>
                   <div class="api-key-wrapper"><input type="password" id="xaiKeyInput" placeholder="xai-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleXaiKeyVis()">👁</button></div>
-                  <div class="hint">For Grok/xAI text-to-speech. Separate from OpenRouter.</div>
                 </div>
                 <div class="voice-grid">
                   <div class="form-group">
@@ -861,22 +858,37 @@ html, body {
                   </div>
                 </div>
               </div>
+
+              <div class="cc-card" data-cc-value="fishaudio" data-cc-label="Fish Audio">
+                <div class="form-group">
+                  <label>Fish Audio API Key</label>
+                  <div class="api-key-wrapper"><input type="password" id="fishAudioKeyInput" placeholder="Fish Audio API key" autocomplete="off"><button class="toggle-visibility" onclick="toggleFishAudioKeyVis()">👁</button></div>
+                </div>
+                <div class="voice-grid">
+                  <div class="form-group">
+                    <label>Reference ID (Voice)</label>
+                    <input type="text" id="fishAudioRefIdInput" placeholder="Voice model reference ID" autocomplete="off">
+                  </div>
+                  <div class="form-group">
+                    <label>Model</label>
+                    <input type="text" id="fishAudioModelInput" placeholder="s2-pro" autocomplete="off">
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
 
           <div class="form-group" style="margin-top:6px">
             <label>Speed</label>
             <div class="slider-row"><input type="range" id="voiceSpeedSlider" min="0.7" max="1.5" step="0.05" value="1.0"><span class="slider-val" id="voiceSpeedVal">1.00</span></div>
-            <div class="hint">1.0 is natural pace. Lower for slower, higher for faster.</div>
           </div>
           <button class="action-btn" style="width:100%;margin-bottom:8px" onclick="testVoice()">▶ Test selected voice</button>
-          <div class="hint">The voice on the visible card is the one that's used. Saved with the rest of your settings.</div>
         </div>
       </div>
-      <div class="section-divider" onclick="toggleSection('supabaseSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> Supabase (Cloud Sync)</div>
+      <div class="section-divider" onclick="toggleSection('supabaseSection',this)"><span class="toggle-arrow collapsed">▼</span> Supabase (Cloud Sync)</div>
       <div class="collapsible-section collapsed" id="supabaseSection">
         <div style="padding-top:12px">
-          <div class="form-group"><label>Supabase URL</label><input type="text" id="supabaseUrlInput" placeholder="https://xxxxx.supabase.co"><div class="hint">Project Settings → API → Project URL</div></div>
+          <div class="form-group"><label>Supabase URL</label><input type="text" id="supabaseUrlInput" placeholder="https://xxxxx.supabase.co"></div>
           <div class="form-group"><label>Supabase Anon Key</label><div class="api-key-wrapper"><input type="password" id="supabaseKeyInput" placeholder="eyJ..." autocomplete="off"><button class="toggle-visibility" onclick="toggleSupabaseKeyVis()">👁</button></div></div>
           <button class="save-btn" style="margin-bottom:12px" onclick="saveSupabaseConfig()">Save Supabase & Reconnect</button>
           <div id="accountStatus" style="display:none;margin-top:12px;padding:12px;background:var(--bg-tertiary);border-radius:var(--radius-sm);border:1px solid var(--border)">
@@ -894,12 +906,12 @@ html, body {
       <div class="section-divider" onclick="toggleSection('memRetrievalSection',this)"><span class="toggle-arrow collapsed">▼</span> Memory Retrieval</div>
       <div class="collapsible-section collapsed" id="memRetrievalSection">
         <div style="padding-top:12px">
-          <div class="form-group"><label>Context Messages</label><div class="slider-row"><input type="range" id="contextSlider" min="2" max="60" step="2" value="10"><span class="slider-val" id="contextVal">10</span></div><div class="hint">How many recent messages are sent to the API.</div></div>
+          <div class="form-group"><label>Context Messages</label><div class="slider-row"><input type="range" id="contextSlider" min="2" max="60" step="2" value="10"><span class="slider-val" id="contextVal">10</span></div></div>
           <div class="form-group"><label>Max Memories Per Message</label><div class="slider-row"><input type="range" id="maxMemSlider" min="1" max="10" step="1" value="3"><span class="slider-val" id="maxMemVal">3</span></div></div>
-          <div class="form-group"><label>Semantic Match Threshold</label><div class="slider-row"><input type="range" id="thresholdSlider" min="0.2" max="0.8" step="0.05" value="0.4"><span class="slider-val" id="thresholdVal">0.40</span></div><div class="hint">How similar a memory must be to your message to fire. Lower = more eager, higher = pickier. Default 0.40.</div></div>
+          <div class="form-group"><label>Semantic Match Threshold</label><div class="slider-row"><input type="range" id="thresholdSlider" min="0.2" max="0.8" step="0.05" value="0.4"><span class="slider-val" id="thresholdVal">0.40</span></div></div>
         </div>
       </div>
-      <div class="section-divider" onclick="toggleSection('paramsSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> Sampling Parameters</div>
+      <div class="section-divider" onclick="toggleSection('paramsSection',this)"><span class="toggle-arrow collapsed">▼</span> Sampling Parameters</div>
       <div class="collapsible-section collapsed" id="paramsSection">
         <div style="padding-top:12px">
           <div class="slider-row"><label>Temperature</label><input type="range" id="paramTemp" min="0" max="2" step="0.05" value="0.85"><span class="slider-val" id="valTemp">0.85</span></div>
@@ -910,10 +922,9 @@ html, body {
           <div class="slider-row"><label>Repet. Penalty</label><input type="range" id="paramRepP" min="0" max="2" step="0.05" value="1.15"><span class="slider-val" id="valRepP">1.15</span></div>
           <div class="slider-row"><label>Min P</label><input type="range" id="paramMinP" min="0" max="1" step="0.01" value="0.05"><span class="slider-val" id="valMinP">0.05</span></div>
           <div class="slider-row"><label>Max Tokens</label><input type="range" id="paramMaxTok" min="0" max="16384" step="256" value="0"><span class="slider-val" id="valMaxTok">0</span></div>
-          <div class="hint">Max Tokens 0 = unlimited. Repetition Penalty 1.0 = off.</div>
         </div>
       </div>
-      <div class="section-divider" onclick="toggleSection('displayThemeSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> Display Theme</div>
+      <div class="section-divider" onclick="toggleSection('displayThemeSection',this)"><span class="toggle-arrow collapsed">▼</span> Display Theme</div>
       <div class="collapsible-section collapsed" id="displayThemeSection">
         <div style="padding-top:12px">
           <input type="hidden" id="themeSelect">
@@ -969,18 +980,16 @@ html, body {
             <button class="action-btn" onclick="exportAll()">Export JSON</button>
             <button class="action-btn" onclick="exportAllMarkdown()">Export Markdown</button>
           </div>
-          <div class="hint" style="margin-top:6px">JSON is a full backup (re-importable). Markdown is a human-readable transcript.</div>
           <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
             <label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:8px">Memory Cards</label>
             <div class="action-row">
               <button class="action-btn" onclick="exportMemories()">Export JSON</button>
               <button class="action-btn" onclick="exportMemoriesMarkdown()">Export Markdown</button>
             </div>
-            <div class="hint" style="margin-top:6px">JSON for re-importing. Markdown for reading or feeding to a model.</div>
           </div>
         </div>
       </div>
-      <div class="section-divider" onclick="toggleSection('importSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> Import</div>
+      <div class="section-divider" onclick="toggleSection('importSection',this)"><span class="toggle-arrow collapsed">▼</span> Import</div>
       <div class="collapsible-section collapsed" id="importSection">
         <div style="padding-top:12px">
           <label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:8px">Full Backup</label>
@@ -988,14 +997,12 @@ html, body {
             <button class="action-btn" onclick="document.getElementById('importFile').click()">Import JSON</button>
             <input type="file" id="importFile" accept=".json" style="display:none" onchange="importAll(event)">
           </div>
-          <div class="hint" style="margin-top:6px">Import replaces all current chats, memories, and settings with the contents of the backup.</div>
           <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
             <label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:8px">Memory Cards</label>
             <div class="action-row">
               <button class="action-btn" onclick="document.getElementById('memFragmentFile').click()">Import Markdown File</button>
               <input type="file" id="memFragmentFile" accept=".md,text/markdown,text/plain" style="display:none" onchange="importMemoryFragments(event)">
             </div>
-            <div class="hint" style="margin-top:6px">Markdown with <code>## Title</code> headings is treated as pre-structured fragments. Raw conversation logs (no headings) are scanned and split into multiple cards automatically.</div>
             <div style="margin-top:12px">
               <label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:8px">Or paste text directly</label>
               <textarea id="memFragmentPaste" placeholder="Paste a conversation log or pre-structured markdown (## Title format). The model decides whether to split into multiple cards." style="min-height:120px;font-family:'JetBrains Mono',monospace;font-size:12px"></textarea>
@@ -1004,7 +1011,6 @@ html, body {
           </div>
           <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
             <div class="action-row"><button class="action-btn" onclick="clearAllData()" style="border-color:var(--danger);color:var(--danger)">Delete everything</button></div>
-            <div class="hint" style="margin-top:6px">Wipes all local chats, memories, and settings. Cannot be undone.</div>
           </div>
         </div>
       </div>
@@ -1045,7 +1051,6 @@ html, body {
       <div id="threadDetailStatus" style="font-size:12px;color:var(--accent);font-style:italic;margin-bottom:12px;text-transform:uppercase;letter-spacing:0.06em"></div>
       <div id="threadDetailFields"></div>
       <div style="border-top:1px solid var(--border);margin-top:20px;padding-top:14px">
-        <div class="hint" style="margin-bottom:10px">Threads update automatically as the conversation moves. If something looks wrong, just tell Kai in chat — he'll correct it on the next turn.</div>
         <button class="action-btn" id="threadDetailDelete" style="border-color:var(--danger);color:var(--danger);width:100%">Close this thread</button>
       </div>
     </div>
@@ -1403,6 +1408,7 @@ function ensureVoiceState() {
       openai: { apiKey: '', voice: 'nova', model: 'tts-1' },
       elevenlabs: { apiKey: '', voiceId: '', model: 'eleven_multilingual_v2', stability: 0.45, similarityBoost: 0.85, style: 0.35 },
       xai: { apiKey: '', voiceId: 'eve', language: 'en' },
+      fishaudio: { apiKey: '', referenceId: '', model: 's2-pro' },
       browser: {}
     }
   };
@@ -1416,7 +1422,7 @@ function ensureVoiceState() {
   if (state.xaiKey && !state.voice.providers.xai.apiKey) state.voice.providers.xai.apiKey = state.xaiKey;
   if (state.xaiVoiceId && !state.voice.providers.xai.voiceId) state.voice.providers.xai.voiceId = state.xaiVoiceId;
   if (state.voiceSpeed && !state.voice.speed) state.voice.speed = state.voiceSpeed;
-  if (!['browser', 'openai', 'elevenlabs', 'xai'].includes(state.voice.provider)) state.voice.provider = 'browser';
+  if (!['browser', 'openai', 'elevenlabs', 'xai', 'fishaudio'].includes(state.voice.provider)) state.voice.provider = 'browser';
 }
 
 let editingMemoryId = null;
@@ -1798,7 +1804,9 @@ function renderChatList() {
       <button class="chat-download" onclick="event.stopPropagation();exportSingleChatMarkdown('${chat.id}')" title="Download as markdown">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
       </button>
-      <button class="chat-rename" onclick="event.stopPropagation();renameChat('${chat.id}',this)" title="Rename">✎</button>
+      <button class="chat-rename" onclick="event.stopPropagation();renameChat('${chat.id}',this)" title="Rename">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9.5 14.5 15 9l-1.5-1.5-5.5 5.5v1.5z"/></svg>
+      </button>
       <button class="chat-delete" onclick="event.stopPropagation();deleteChat('${chat.id}')">×</button>`;
     div.onclick = () => { switchChat(chat.id); closeSidebar(); };
     list.appendChild(div);
@@ -2964,15 +2972,19 @@ function createMessageEl(role, content, msgData, idx) {
     });
   }
 
-  // FIX #2 & #4: Edit button on user msgs, Listen button on assistant msgs
-  let actions = `<div class="message-actions"><button class="msg-action-btn" onclick="copyMessage(this,${idx})">Copy</button>`;
+  // Icon buttons. Order: Copy, Capture, then Listen (assistant) or Edit (user).
+  const ICON_COPY = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+  const ICON_CAPTURE = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
+  const ICON_LISTEN = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg>';
+  const ICON_EDIT = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9.5 14.5 15 9l-1.5-1.5-5.5 5.5v1.5z"/></svg>';
+  let actions = `<div class="message-actions"><button class="msg-action-btn" title="Copy" onclick="copyMessage(this,${idx})">${ICON_COPY}</button>`;
+  actions += `<button class="msg-action-btn" title="Capture" onclick="captureMemoryFromMessage(${idx},this)">${ICON_CAPTURE}</button>`;
   if (role === 'assistant') {
-    actions += `<button class="msg-action-btn" onclick="readAloud(this,${idx})">Listen</button>`;
+    actions += `<button class="msg-action-btn" title="Listen" data-icon-listen onclick="readAloud(this,${idx})">${ICON_LISTEN}</button>`;
   }
   if (role === 'user') {
-    actions += `<button class="msg-action-btn" onclick="editMessage(${idx})">Edit</button>`;
+    actions += `<button class="msg-action-btn" title="Edit" onclick="editMessage(${idx})">${ICON_EDIT}</button>`;
   }
-  actions += `<button class="msg-action-btn" onclick="captureMemoryFromMessage(${idx},this)">Capture</button>`;
   actions += '</div>';
 
   div.innerHTML = `<div class="message-label">${escapeHtml(label)}</div><div class="message-bubble">${bc}</div>${actions}`;
@@ -2986,9 +2998,10 @@ function copyMessage(btn, idx) {
   const text = typeof msg.content === 'string' ? msg.content : msg.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
   copyToClipboard(text).then(ok => {
     if (ok) {
+      const original = btn.innerHTML;
       btn.classList.add('copied');
-      btn.textContent = 'Copied!';
-      setTimeout(() => { btn.classList.remove('copied'); btn.textContent = 'Copy'; }, 2000);
+      btn.innerHTML = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>';
+      setTimeout(() => { btn.classList.remove('copied'); btn.innerHTML = original; }, 2000);
     } else {
       showToast('Copy failed — try again');
     }
@@ -3085,6 +3098,10 @@ function captureVoicePanelInputs() {
   state.voice.providers.xai.voiceId = document.getElementById('xaiVoiceIdInput')?.value.trim() || 'eve';
   state.voice.providers.xai.language = document.getElementById('xaiLanguageInput')?.value.trim() || 'en';
 
+  state.voice.providers.fishaudio.apiKey = document.getElementById('fishAudioKeyInput')?.value.trim() || '';
+  state.voice.providers.fishaudio.referenceId = document.getElementById('fishAudioRefIdInput')?.value.trim() || '';
+  state.voice.providers.fishaudio.model = document.getElementById('fishAudioModelInput')?.value.trim() || 's2-pro';
+
   state.voice.speed = parseFloat(document.getElementById('voiceSpeedSlider')?.value) || 1.0;
   // Legacy mirrors for old backups/imports and any older callers.
   state.voiceSpeed = state.voice.speed;
@@ -3123,15 +3140,24 @@ function ccInit(id, onSelect) {
     dotsWrap.innerHTML = cards.map(() => '<span class="cc-dot"></span>').join('');
     dotsWrap.dataset.built = '1';
   }
-  // Swipe
+  // Swipe — only register when the gesture is clearly horizontal, so a
+  // vertical scroll passing over the carousel doesn't flip the card.
   if (!stage.dataset.swipe) {
-    let x0 = null;
-    stage.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; }, { passive: true });
+    let x0 = null, y0 = null;
+    stage.addEventListener('touchstart', e => {
+      x0 = e.touches[0].clientX;
+      y0 = e.touches[0].clientY;
+    }, { passive: true });
     stage.addEventListener('touchend', e => {
       if (x0 == null) return;
       const dx = e.changedTouches[0].clientX - x0;
-      if (Math.abs(dx) > 40) ccStep(id, dx < 0 ? 1 : -1);
-      x0 = null;
+      const dy = e.changedTouches[0].clientY - y0;
+      // Require a clearly horizontal gesture: horizontal travel beats vertical,
+      // and clears the swipe threshold.
+      if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) {
+        ccStep(id, dx < 0 ? 1 : -1);
+      }
+      x0 = null; y0 = null;
     }, { passive: true });
     stage.dataset.swipe = '1';
   }
@@ -3194,6 +3220,7 @@ function loadVoiceSettingsIntoUI() {
   const openai = v.providers.openai;
   const eleven = v.providers.elevenlabs;
   const xai = v.providers.xai;
+  const fish = v.providers.fishaudio;
 
   const setVal = (id, value) => { const el = document.getElementById(id); if (el) el.value = value ?? ''; };
   setVal('openaiKeyInput', openai.apiKey || '');
@@ -3208,6 +3235,9 @@ function loadVoiceSettingsIntoUI() {
   setVal('xaiKeyInput', xai.apiKey || '');
   setVal('xaiVoiceIdInput', xai.voiceId || 'eve');
   setVal('xaiLanguageInput', xai.language || 'en');
+  setVal('fishAudioKeyInput', fish.apiKey || '');
+  setVal('fishAudioRefIdInput', fish.referenceId || '');
+  setVal('fishAudioModelInput', fish.model || 's2-pro');
   setSlider('voiceSpeedSlider', 'voiceSpeedVal', v.speed || state.voiceSpeed || 1.0);
   ccInit('voiceCarousel', onVoiceCardSelect);
   ccGoTo('voiceCarousel', activeVoiceProvider());
@@ -3290,6 +3320,32 @@ async function playXaiTTS(text, speed) {
   return playAudioBlob(await resp.blob(), speed);
 }
 
+async function playFishAudioTTS(text, speed) {
+  const cfg = state.voice.providers.fishaudio;
+  if (!cfg.apiKey) throw new Error('Missing Fish Audio API key');
+  if (!cfg.referenceId) throw new Error('Missing Fish Audio reference ID');
+  const resp = await fetch('https://api.fish.audio/v1/tts', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${cfg.apiKey}`,
+      'model': cfg.model || 's2-pro',
+    },
+    body: JSON.stringify({
+      text: text.slice(0, 10000),
+      reference_id: cfg.referenceId,
+      format: 'mp3',
+      prosody: { speed: speed || 1.0 },
+    })
+  });
+  if (!resp.ok) {
+    const errText = await resp.text().catch(() => '');
+    throw new Error(`Fish Audio TTS error ${resp.status}: ${errText.slice(0, 160) || resp.statusText}`);
+  }
+  // Fish Audio applies prosody.speed server-side, so don't double-apply on playback.
+  return playAudioBlob(await resp.blob(), 1.0);
+}
+
 function playAudioBlob(blob, speed) {
   const url = URL.createObjectURL(blob);
   return new Promise((resolve, reject) => {
@@ -3329,13 +3385,17 @@ async function playSelectedVoice(text) {
   if (provider === 'openai') return playOpenAITTS(text, speed);
   if (provider === 'elevenlabs') return playElevenLabsTTS(text, speed);
   if (provider === 'xai') return playXaiTTS(text, speed);
+  if (provider === 'fishaudio') return playFishAudioTTS(text, speed);
   return browserTTSFallback(text, speed);
 }
 
 async function readAloud(btn, idx) {
+  const iconListen = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg>';
+  const iconStop = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
   if (currentAudio || (typeof speechSynthesis !== 'undefined' && speechSynthesis.speaking)) {
     stopAudio();
-    btn.textContent = 'Listen';
+    btn.innerHTML = iconListen;
+    btn.title = 'Listen';
     return;
   }
   const chat = getActiveChat();
@@ -3344,14 +3404,16 @@ async function readAloud(btn, idx) {
   const text = typeof msg.content === 'string' ? msg.content : msg.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
   if (!text) return;
 
-  btn.textContent = 'Stop';
+  btn.innerHTML = iconStop;
+  btn.title = 'Stop';
   try {
     await playSelectedVoice(text);
   } catch (e) {
     showToast(e.message || 'Voice error — check selected provider settings');
     console.error('TTS error:', e);
   }
-  btn.textContent = 'Listen';
+  btn.innerHTML = iconListen;
+  btn.title = 'Listen';
 }
 
 async function testVoice() {
@@ -3852,8 +3914,8 @@ async function captureMemoryFromMessage(idx, btn) {
   if (!chat || !chat.messages[idx]) { showToast('Could not find that message'); return; }
   if (!state.apiKey) { showToast('Set API key first'); return; }
 
-  const origLabel = btn.textContent;
-  btn.textContent = '…';
+  const origLabel = btn.innerHTML;
+  btn.innerHTML = '…';
   btn.disabled = true;
 
   try {
@@ -3897,7 +3959,7 @@ async function captureMemoryFromMessage(idx, btn) {
     console.error('Capture error:', e);
     showToast(`Capture failed: ${e.message || e}`);
   } finally {
-    btn.textContent = origLabel;
+    btn.innerHTML = origLabel;
     btn.disabled = false;
   }
 }
@@ -4088,6 +4150,11 @@ function openSettings() {
     const el = document.getElementById(id);
     if (el) el.style.display = id === 'keysTab' ? '' : 'none';
   });
+  // Reset the tab row's scroll position so the highlight matches the visible pane.
+  const tabsRow = document.getElementById('settingsTabsRow');
+  if (tabsRow) tabsRow.scrollTo({ left: 0 });
+  // Every section starts collapsed on open.
+  collapseAllSections();
   document.getElementById('themeSelect').value = getThemePreference();
   document.getElementById('apiKeyInput').value = state.apiKey;
   document.getElementById('supabaseUrlInput').value = localStorage.getItem('haven_supabase_url') || '';
@@ -4146,6 +4213,8 @@ function switchSettingsTab(tabId, btn) {
     const el = document.getElementById(id);
     if (el) el.style.display = id === tabId ? '' : 'none';
   });
+  // Every tab is entered fresh — collapse all sections on switch.
+  collapseAllSections();
   if (tabId === 'injectionsTab') renderMemoryCards();
   if (tabId === 'keysTab') loadVoiceSettingsIntoUI();
 }
@@ -4290,6 +4359,11 @@ function toggleXaiKeyVis() {
   i.type = i.type === 'password' ? 'text' : 'password';
 }
 
+function toggleFishAudioKeyVis() {
+  const i = document.getElementById('fishAudioKeyInput');
+  i.type = i.type === 'password' ? 'text' : 'password';
+}
+
 async function saveSupabaseConfig() {
   const url = document.getElementById('supabaseUrlInput').value.trim();
   const key = document.getElementById('supabaseKeyInput').value.trim();
@@ -4355,8 +4429,35 @@ if (window.matchMedia) {
 }
 
 function toggleSection(id, el) {
-  document.getElementById(id).classList.toggle('collapsed');
+  const target = document.getElementById(id);
+  const willOpen = target.classList.contains('collapsed');
+  // Accordion: opening one section closes sibling sections in the same tab.
+  // Scope to the nearest .modal-body so nested child sections aren't force-closed
+  // by a top-level sibling, and vice versa.
+  if (willOpen) {
+    const scope = el.closest('.modal-body') || document;
+    // Only close siblings at the same nesting level as the divider being clicked.
+    const parent = el.parentElement;
+    [...parent.children].forEach(node => {
+      if (node.classList && node.classList.contains('section-divider') && node !== el) {
+        const arrow = node.querySelector('.toggle-arrow');
+        if (arrow && !arrow.classList.contains('collapsed')) {
+          arrow.classList.add('collapsed');
+        }
+      }
+      if (node.classList && node.classList.contains('collapsible-section') && node !== target) {
+        node.classList.add('collapsed');
+      }
+    });
+  }
+  target.classList.toggle('collapsed');
   el.querySelector('.toggle-arrow').classList.toggle('collapsed');
+}
+
+// Force every collapsible section + divider arrow back to collapsed.
+function collapseAllSections() {
+  document.querySelectorAll('.collapsible-section').forEach(s => s.classList.add('collapsed'));
+  document.querySelectorAll('.section-divider .toggle-arrow').forEach(a => a.classList.add('collapsed'));
 }
 
 // ===== MEMORIES UI =====
@@ -4395,37 +4496,22 @@ function renderMemoryCards() {
   }
   sorted.forEach(mem => {
     const card = document.createElement('div');
-    card.className = 'memory-card';
-    const tok = estimateTokens(mem.content || '');
+    card.className = 'memory-card tappable';
     const icon = mem.pinned ? '📌' : (mem.enabled !== false ? '●' : '○');
-    // Captured date — relative if recent, absolute otherwise
-    const ts = mem.capturedAt || mem.createdAt || 0;
-    let dateStr = '';
-    if (ts) {
-      const d = new Date(ts);
-      const now = new Date();
-      const dayMs = 86400000;
-      const diff = Math.floor((now - d) / dayMs);
-      if (diff === 0) dateStr = 'today';
-      else if (diff === 1) dateStr = 'yesterday';
-      else if (diff < 7) dateStr = `${diff} days ago`;
-      else dateStr = d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: d.getFullYear() === now.getFullYear() ? undefined : 'numeric' });
-    }
-    // Content preview — first ~120 chars of the content, single line
-    const preview = (mem.content || '').replace(/\s+/g, ' ').trim().slice(0, 120);
-    const previewSuffix = (mem.content || '').length > 120 ? '…' : '';
+    const content = (mem.content || '').trim();
 
     card.innerHTML = `
       <div class="memory-card-header">
         <span class="memory-card-name">${icon} ${escapeHtml(mem.name)}</span>
         <div class="memory-card-actions">
-          <button onclick="openMemoryEditor('${mem.id}')">Edit</button>
-          <button class="del" onclick="deleteMemory('${mem.id}')">×</button>
+          <button onclick="event.stopPropagation();openMemoryEditor('${mem.id}')">Edit</button>
+          <button class="del" onclick="event.stopPropagation();deleteMemory('${mem.id}')">×</button>
         </div>
       </div>
-      <div style="font-size:11.5px;color:var(--text-secondary);line-height:1.5;margin-top:4px">${escapeHtml(preview)}${previewSuffix}</div>
-      <div class="memory-card-meta" style="margin-top:6px">${dateStr ? dateStr + ' · ' : ''}~${tok} tokens${mem.pinned ? ' · Pinned' : ''}</div>
-      ${(mem.keywords || []).length ? `<div class="memory-card-keywords" style="margin-top:5px">${mem.keywords.map(k => `<span>${escapeHtml(k)}</span>`).join('')}</div>` : ''}`;
+      ${(mem.keywords || []).length ? `<div class="memory-card-keywords" style="margin-top:5px">${mem.keywords.map(k => `<span>${escapeHtml(k)}</span>`).join('')}</div>` : ''}
+      <div class="memory-card-content">${content ? escapeHtml(content) : '<em style="color:var(--text-muted)">No content.</em>'}</div>`;
+    // Tap the card body to expand/collapse the content (buttons stopPropagation above).
+    card.addEventListener('click', () => card.classList.toggle('expanded'));
     list.appendChild(card);
   });
 }
@@ -4810,7 +4896,14 @@ function showToast(msg, isError = true) {
   t.textContent = msg;
   t.style.background = isError ? 'var(--danger)' : 'var(--success)';
   t.classList.add('visible');
-  setTimeout(() => t.classList.remove('visible'), 3000);
+  // Stay up until tapped or replaced by the next toast (no auto-hide).
+  // showToast overwrites textContent on each call, so a new toast naturally
+  // replaces the current one in the same element.
+  if (!t.dataset.tapBound) {
+    t.addEventListener('click', () => t.classList.remove('visible'));
+    t.style.cursor = 'pointer';
+    t.dataset.tapBound = '1';
+  }
 }
 
 // ===== INIT =====
