@@ -363,6 +363,41 @@ html, body {
 .voice-provider-sub { font-size: 10.5px; color: var(--text-muted); line-height: 1.35; }
 .voice-panel { display: none; }
 .voice-panel.active { display: block; }
+
+/* ===== FULL-CARD CAROUSEL (one card at a time, arrows + swipe) ===== */
+.card-carousel { padding-top: 4px; }
+.cc-nav {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; margin-bottom: 10px;
+}
+.cc-arrow {
+  flex: 0 0 auto; width: 32px; height: 32px; border-radius: 50%;
+  background: var(--bg-tertiary); border: 1px solid var(--border);
+  color: var(--text-secondary); cursor: pointer; display: flex;
+  align-items: center; justify-content: center; font-size: 15px;
+  transition: all 0.18s; -webkit-tap-highlight-color: transparent;
+}
+.cc-arrow:hover { border-color: var(--accent); color: var(--accent); }
+.cc-arrow:active { transform: scale(0.92); }
+.cc-arrow:disabled { opacity: 0.3; cursor: default; }
+.cc-title {
+  flex: 1; text-align: center; font-family: 'DM Sans', sans-serif;
+  font-size: 13px; font-weight: 600; color: var(--accent);
+  letter-spacing: 0.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.cc-dots { display: flex; justify-content: center; gap: 6px; margin-bottom: 12px; }
+.cc-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--border-light); transition: all 0.18s; }
+.cc-dot.active { background: var(--accent); }
+.cc-stage { position: relative; }
+.cc-card { display: none; }
+.cc-card.active { display: block; animation: cc-fade 0.22s ease; }
+@keyframes cc-fade { from { opacity: 0; transform: translateX(6px); } to { opacity: 1; transform: translateX(0); } }
+
+/* Theme preview swatches */
+.theme-swatch-row { display: flex; gap: 6px; margin-bottom: 14px; }
+.theme-swatch { flex: 1; height: 44px; border-radius: var(--radius-sm); border: 1px solid var(--border); }
+.theme-card-label { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px; }
+.theme-card-desc { font-size: 11px; color: var(--text-muted); margin-bottom: 12px; }
 .voice-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 @media (max-width: 600px) { .voice-grid { grid-template-columns: 1fr; } }
 
@@ -466,6 +501,7 @@ html, body {
   display: flex; align-items: center; gap: 8px; cursor: pointer; user-select: none;
 }
 .section-divider .toggle-arrow { font-size: 10px; transition: transform 0.2s; }
+.modal-body > .section-divider:first-child { border-top: none; margin-top: 0; padding-top: 8px; }
 .section-divider .toggle-arrow.collapsed { transform: rotate(-90deg); }
 .collapsible-section { overflow: hidden; transition: max-height 0.3s ease; max-height: 2000px; }
 .collapsible-section.collapsed { max-height: 0; }
@@ -480,14 +516,27 @@ html, body {
 .remove-btn:hover { color: var(--danger); }
 .add-btn { background: var(--bg-tertiary); border: 1px dashed var(--border); border-radius: var(--radius-sm); padding: 8px 12px; color: var(--text-muted); cursor: pointer; font-size: 12px; font-family: 'DM Sans', sans-serif; width: 100%; transition: all 0.15s; }
 .add-btn:hover { border-color: var(--accent); color: var(--accent); }
-.settings-tabs {
-  display: flex; border-bottom: 1px solid var(--border); padding: 0 20px;
+.settings-tabs-wrap {
+  display: flex; align-items: stretch; border-bottom: 1px solid var(--border);
   position: sticky; top: 52px; background: var(--bg-secondary); z-index: 1;
 }
+.settings-tabs {
+  display: flex; flex: 1; padding: 4px 4px 0; gap: 4px;
+  overflow-x: auto; scrollbar-width: none; -ms-overflow-style: none; scroll-behavior: smooth;
+}
+.settings-tabs::-webkit-scrollbar { display: none; }
+.settings-tab-arrow {
+  flex: 0 0 auto; width: 32px; background: var(--bg-secondary); border: none;
+  color: var(--text-muted); cursor: pointer; font-size: 16px; display: flex;
+  align-items: center; justify-content: center; transition: color 0.15s;
+  -webkit-tap-highlight-color: transparent;
+}
+.settings-tab-arrow:hover { color: var(--accent); }
+.settings-tab-arrow:active { color: var(--accent-dim); }
 .settings-tab {
-  flex: 1; padding: 12px 0; background: none; border: none; border-bottom: 2px solid transparent;
+  flex: 0 0 auto; padding: 10px 12px; background: none; border: none; border-bottom: 2px solid transparent;
   color: var(--text-muted); font-family: 'DM Sans', sans-serif; font-size: 13px; font-weight: 500;
-  cursor: pointer; transition: all 0.2s; letter-spacing: 0.03em;
+  cursor: pointer; transition: all 0.2s; letter-spacing: 0.03em; white-space: nowrap;
 }
 .settings-tab:hover { color: var(--text-secondary); }
 .settings-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
@@ -575,7 +624,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v36d</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v36i</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -619,135 +668,209 @@ html, body {
 <div class="modal-overlay" id="settingsModal">
   <div class="modal">
     <div class="modal-header"><h3>Settings</h3><button class="modal-close" onclick="closeSettings()">×</button></div>
-    <div class="settings-tabs">
-      <button class="settings-tab active" data-tab="settingsTab" onclick="switchSettingsTab('settingsTab', this)">Settings</button>
-      <button class="settings-tab" data-tab="memoryTab" onclick="switchSettingsTab('memoryTab', this)">Memory</button>
+    <div class="settings-tabs-wrap">
+      <button class="settings-tab-arrow" onclick="scrollTabs(-1)" aria-label="Scroll tabs left">‹</button>
+      <div class="settings-tabs" id="settingsTabsRow">
+        <button class="settings-tab active" data-tab="keysTab" onclick="switchSettingsTab('keysTab', this)">Keys</button>
+        <button class="settings-tab" data-tab="injectionsTab" onclick="switchSettingsTab('injectionsTab', this)">Injections</button>
+        <button class="settings-tab" data-tab="calibrationsTab" onclick="switchSettingsTab('calibrationsTab', this)">Calibrations</button>
+        <button class="settings-tab" data-tab="exportsTab" onclick="switchSettingsTab('exportsTab', this)">Exports &amp; Imports</button>
+        <button class="settings-tab" data-tab="membershipTab" onclick="switchSettingsTab('membershipTab', this)">Membership</button>
+      </div>
+      <button class="settings-tab-arrow" onclick="scrollTabs(1)" aria-label="Scroll tabs right">›</button>
     </div>
-    <div class="modal-body" id="settingsTab">
-      <div class="form-group">
-        <label>Theme</label>
-        <select class="form-select" id="themeSelect" onchange="setThemePreference(this.value)" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b5f52' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;padding-right:36px">
-          <option value="auto">Auto (follow device)</option>
-          <option value="light">Light (day)</option>
-          <option value="dark">Dark (night)</option>
-        </select>
-        <div class="hint">Auto switches with your device's day/night setting.</div>
-      </div>
-      <div class="form-group"><label>Your Name</label><input type="text" id="userLabelInput" placeholder="You"></div>
-      <div class="form-group"><label>AI Name</label><input type="text" id="aiLabelInput" placeholder="Kai"></div>
-      <div class="form-group">
-        <label>Model</label>
-        <select class="form-select" id="modelSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b5f52' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;padding-right:36px"></select>
-        <div class="hint">Switch models anytime. Your system prompt carries over.</div>
-      </div>
-      <div class="form-group"><label>System Prompt</label><textarea id="systemPromptInput" placeholder="Paste your character's behavioral charter here..."></textarea><div class="hint" id="systemPromptTokens"></div></div>
-      <div class="form-group"><label>API Key</label><div class="api-key-wrapper"><input type="password" id="apiKeyInput" placeholder="sk-or-v1-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleApiVis()">👁</button></div><div class="hint">OpenRouter key. Stored only on your device.</div></div>
-      <div class="section-divider" onclick="toggleSection('voiceSection',this)"><span class="toggle-arrow">▼</span> Voice (Listen)</div>
-      <div class="collapsible-section" id="voiceSection">
+
+    <!-- ===== INJECTIONS TAB ===== -->
+    <div class="modal-body" id="injectionsTab">
+      <div class="section-divider" onclick="toggleSection('namesSection',this)"><span class="toggle-arrow collapsed">▼</span> Names</div>
+      <div class="collapsible-section collapsed" id="namesSection">
         <div style="padding-top:12px">
-          <div class="voice-provider-carousel" id="voiceProviderCarousel">
-            <button type="button" class="voice-provider-card" data-provider="browser" onclick="selectVoiceProvider('browser')"><div class="voice-provider-title">Browser</div><div class="voice-provider-sub">No key. Device voice.</div></button>
-            <button type="button" class="voice-provider-card" data-provider="openai" onclick="selectVoiceProvider('openai')"><div class="voice-provider-title">OpenAI</div><div class="voice-provider-sub">Nova, Onyx, Echo…</div></button>
-            <button type="button" class="voice-provider-card" data-provider="elevenlabs" onclick="selectVoiceProvider('elevenlabs')"><div class="voice-provider-title">ElevenLabs</div><div class="voice-provider-sub">Custom Voice ID.</div></button>
-            <button type="button" class="voice-provider-card" data-provider="xai" onclick="selectVoiceProvider('xai')"><div class="voice-provider-title">xAI / Grok</div><div class="voice-provider-sub">Voice ID or built-in.</div></button>
+          <div class="form-group"><label>Your Name</label><input type="text" id="userLabelInput" placeholder="You"></div>
+          <div class="form-group"><label>AI Name</label><input type="text" id="aiLabelInput" placeholder="Kai"></div>
+        </div>
+      </div>
+      <div class="section-divider" onclick="toggleSection('systemPromptSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> System Prompt</div>
+      <div class="collapsible-section collapsed" id="systemPromptSection">
+        <div style="padding-top:12px">
+          <div class="form-group"><label>System Prompt</label><textarea id="systemPromptInput" placeholder="Paste your character's behavioral charter here..."></textarea><div class="hint" id="systemPromptTokens"></div></div>
+        </div>
+      </div>
+      <div class="section-divider" onclick="toggleSection('memoryCardsSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> Memory Cards</div>
+      <div class="collapsible-section collapsed" id="memoryCardsSection">
+        <div style="padding-top:12px">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <label style="font-size:12px;font-weight:500;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin:0">Memory Cards</label>
+            <button class="add-btn" style="width:auto;padding:6px 14px;font-size:11px" onclick="openMemoryEditor(null)">+ New</button>
           </div>
-
-          <div class="voice-panel" id="voicePanel-browser">
-            <div class="hint" style="margin-bottom:12px">Uses the built-in voice on this device. No API key needed.</div>
+          <div class="hint" style="margin-bottom:12px">Memories load by semantic similarity to your message. Pinned ones always load.</div>
+          <div class="form-group" style="margin-bottom:12px">
+            <label>Search Memory Cards</label>
+            <input type="search" id="memorySearchInput" placeholder="Search title, context, or keywords..." oninput="renderMemoryCards()">
           </div>
-
-          <div class="voice-panel" id="voicePanel-openai">
-            <div class="form-group">
-              <label>OpenAI API Key (for voice only)</label>
-              <div class="api-key-wrapper"><input type="password" id="openaiKeyInput" placeholder="sk-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleOpenaiKeyVis()">👁</button></div>
-              <div class="hint">Separate from OpenRouter. Used only for text-to-speech.</div>
-            </div>
-            <div class="voice-grid">
-              <div class="form-group">
-                <label>OpenAI Voice</label>
-                <select id="openaiVoiceSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer">
-                  <option value="nova">Nova — warm, conversational</option>
-                  <option value="shimmer">Shimmer — expressive, clear</option>
-                  <option value="alloy">Alloy — neutral, balanced</option>
-                  <option value="coral">Coral — warm, bright</option>
-                  <option value="echo">Echo — deep, calm</option>
-                  <option value="fable">Fable — storytelling</option>
-                  <option value="onyx">Onyx — deep</option>
-                  <option value="sage">Sage — measured</option>
-                  <option value="ash">Ash — soft</option>
-                </select>
-              </div>
-              <div class="form-group">
-                <label>OpenAI Model</label>
-                <select id="openaiTtsModelSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer">
-                  <option value="tts-1">tts-1 — fast</option>
-                  <option value="tts-1-hd">tts-1-hd — higher quality</option>
-                </select>
-              </div>
+          <div id="memoryCardsList"></div>
+          <div class="section-divider" onclick="toggleSection('memMigrateSection',this)" style="margin-top:8px"><span class="toggle-arrow collapsed">▼</span> Regenerate Keywords & Vectors</div>
+          <div class="collapsible-section collapsed" id="memMigrateSection">
+            <div style="padding-top:12px">
+              <div class="hint" style="margin-bottom:10px">Regenerates keywords and vectors for all cards. Does not change card names, content, IDs, pin, or enabled flags.</div>
+              <button class="action-btn" style="width:100%" onclick="regenerateKeywordsAndVectors()">Regenerate keywords & vectors</button>
             </div>
           </div>
+        </div>
+      </div>
+      <div class="section-divider" onclick="toggleSection('userPrefsSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> User Preferences</div>
+      <div class="collapsible-section collapsed" id="userPrefsSection">
+        <div style="padding-top:12px">
+          <div class="form-group"><label>User Preferences</label><textarea id="userPrefsInput" placeholder="How you'd like Kai to relate to you — tone, pacing, things to lean into or avoid."></textarea><div class="hint">Coming soon — a dedicated space for your relational preferences.</div></div>
+        </div>
+      </div>
+      <button class="save-btn" onclick="saveSettings()">Save Injections</button>
+    </div>
 
-          <div class="voice-panel" id="voicePanel-elevenlabs">
-            <div class="form-group">
-              <label>ElevenLabs API Key</label>
-              <div class="api-key-wrapper"><input type="password" id="elevenLabsKeyInput" placeholder="xi-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleElevenLabsKeyVis()">👁</button></div>
-              <div class="hint">Paste once, then switch providers without re-entering it.</div>
+    <!-- ===== KEYS TAB ===== -->
+    <div class="modal-body" id="keysTab" style="display:none">
+      <div class="section-divider" onclick="toggleSection('apiKeySection',this)"><span class="toggle-arrow collapsed">▼</span> API Key</div>
+      <div class="collapsible-section collapsed" id="apiKeySection">
+        <div style="padding-top:12px">
+          <div class="card-carousel" id="keyCarousel">
+            <div class="cc-nav">
+              <button type="button" class="cc-arrow cc-prev" onclick="ccStep('keyCarousel',-1)" aria-label="Previous">‹</button>
+              <div class="cc-title"></div>
+              <button type="button" class="cc-arrow cc-next" onclick="ccStep('keyCarousel',1)" aria-label="Next">›</button>
             </div>
-            <div class="form-group">
-              <label>ElevenLabs Voice ID</label>
-              <input type="text" id="elevenLabsVoiceIdInput" placeholder="Paste your custom voice ID here" autocomplete="off">
-            </div>
-            <div class="voice-grid">
-              <div class="form-group">
-                <label>ElevenLabs Model</label>
-                <select id="elevenLabsModelSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer">
-                  <option value="eleven_multilingual_v2">Multilingual v2 — expressive</option>
-                  <option value="eleven_flash_v2_5">Flash v2.5 — fastest</option>
-                  <option value="eleven_turbo_v2_5">Turbo v2.5 — balanced</option>
-                </select>
+            <div class="cc-dots"></div>
+            <div class="cc-stage">
+              <div class="cc-card" data-cc-value="openrouter" data-cc-label="OpenRouter">
+                <div class="form-group"><label>OpenRouter API Key</label><div class="api-key-wrapper"><input type="password" id="apiKeyInput" placeholder="sk-or-v1-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleApiVis()">👁</button></div><div class="hint">Stored only on your device.</div></div>
+                <div class="form-group">
+                  <label>Model</label>
+                  <select class="form-select" id="modelSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer;appearance:none;-webkit-appearance:none;background-image:url(&quot;data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%236b5f52' stroke-width='2'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E&quot;);background-repeat:no-repeat;background-position:right 12px center;padding-right:36px"></select>
+                  <div class="hint">Switch models anytime. Your system prompt carries over.</div>
+                </div>
+                <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+                  <div class="hint" style="margin-bottom:10px">Add your own — format: provider/model</div>
+                  <div id="customModelsList"></div>
+                  <button class="add-btn" onclick="addCustomModelRow()">+ Add model</button>
+                </div>
               </div>
-              <div class="form-group">
-                <label>Style</label>
-                <input type="number" id="elevenLabsStyleInput" min="0" max="1" step="0.05" value="0.35">
-              </div>
-            </div>
-            <div class="voice-grid">
-              <div class="form-group">
-                <label>Stability</label>
-                <input type="number" id="elevenLabsStabilityInput" min="0" max="1" step="0.05" value="0.45">
-              </div>
-              <div class="form-group">
-                <label>Similarity Boost</label>
-                <input type="number" id="elevenLabsSimilarityInput" min="0" max="1" step="0.05" value="0.85">
+              <div class="cc-card" data-cc-value="add" data-cc-label="+ Add provider">
+                <div style="text-align:center;padding:24px 16px;color:var(--text-muted)">
+                  <div style="font-size:28px;margin-bottom:10px;color:var(--text-secondary)">+</div>
+                  <div class="hint">More providers are coming. Soon you'll be able to paste any provider's key here and the app will detect it automatically.</div>
+                </div>
               </div>
             </div>
           </div>
-
-          <div class="voice-panel" id="voicePanel-xai">
-            <div class="form-group">
-              <label>xAI API Key</label>
-              <div class="api-key-wrapper"><input type="password" id="xaiKeyInput" placeholder="xai-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleXaiKeyVis()">👁</button></div>
-              <div class="hint">For Grok/xAI text-to-speech. Separate from OpenRouter.</div>
+        </div>
+      </div>
+      <div class="section-divider" onclick="toggleSection('voiceSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> Voice (Listen)</div>
+      <div class="collapsible-section collapsed" id="voiceSection">
+        <div style="padding-top:12px">
+          <div class="card-carousel" id="voiceCarousel">
+            <div class="cc-nav">
+              <button type="button" class="cc-arrow cc-prev" onclick="ccStep('voiceCarousel',-1)" aria-label="Previous">‹</button>
+              <div class="cc-title"></div>
+              <button type="button" class="cc-arrow cc-next" onclick="ccStep('voiceCarousel',1)" aria-label="Next">›</button>
             </div>
-            <div class="voice-grid">
-              <div class="form-group">
-                <label>xAI Voice ID</label>
-                <input type="text" id="xaiVoiceIdInput" placeholder="eve or custom voice ID" autocomplete="off">
+            <div class="cc-dots"></div>
+            <div class="cc-stage">
+              <div class="cc-card" data-cc-value="browser" data-cc-label="Browser">
+                <div class="hint" style="margin-bottom:12px">Uses the built-in voice on this device. No API key needed.</div>
               </div>
-              <div class="form-group">
-                <label>Language</label>
-                <input type="text" id="xaiLanguageInput" placeholder="en" autocomplete="off">
+
+              <div class="cc-card" data-cc-value="openai" data-cc-label="OpenAI">
+                <div class="form-group">
+                  <label>OpenAI API Key (for voice only)</label>
+                  <div class="api-key-wrapper"><input type="password" id="openaiKeyInput" placeholder="sk-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleOpenaiKeyVis()">👁</button></div>
+                  <div class="hint">Separate from OpenRouter. Used only for text-to-speech.</div>
+                </div>
+                <div class="voice-grid">
+                  <div class="form-group">
+                    <label>OpenAI Voice</label>
+                    <select id="openaiVoiceSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer">
+                      <option value="nova">Nova — warm, conversational</option>
+                      <option value="shimmer">Shimmer — expressive, clear</option>
+                      <option value="alloy">Alloy — neutral, balanced</option>
+                      <option value="coral">Coral — warm, bright</option>
+                      <option value="echo">Echo — deep, calm</option>
+                      <option value="fable">Fable — storytelling</option>
+                      <option value="onyx">Onyx — deep</option>
+                      <option value="sage">Sage — measured</option>
+                      <option value="ash">Ash — soft</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label>OpenAI Model</label>
+                    <select id="openaiTtsModelSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer">
+                      <option value="tts-1">tts-1 — fast</option>
+                      <option value="tts-1-hd">tts-1-hd — higher quality</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+
+              <div class="cc-card" data-cc-value="elevenlabs" data-cc-label="ElevenLabs">
+                <div class="form-group">
+                  <label>ElevenLabs API Key</label>
+                  <div class="api-key-wrapper"><input type="password" id="elevenLabsKeyInput" placeholder="xi-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleElevenLabsKeyVis()">👁</button></div>
+                  <div class="hint">Paste once, then switch providers without re-entering it.</div>
+                </div>
+                <div class="form-group">
+                  <label>ElevenLabs Voice ID</label>
+                  <input type="text" id="elevenLabsVoiceIdInput" placeholder="Paste your custom voice ID here" autocomplete="off">
+                </div>
+                <div class="voice-grid">
+                  <div class="form-group">
+                    <label>ElevenLabs Model</label>
+                    <select id="elevenLabsModelSelect" style="width:100%;padding:10px 14px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:var(--radius-sm);color:var(--text-primary);font-family:'DM Sans',sans-serif;font-size:13px;outline:none;cursor:pointer">
+                      <option value="eleven_multilingual_v2">Multilingual v2 — expressive</option>
+                      <option value="eleven_flash_v2_5">Flash v2.5 — fastest</option>
+                      <option value="eleven_turbo_v2_5">Turbo v2.5 — balanced</option>
+                    </select>
+                  </div>
+                  <div class="form-group">
+                    <label>Style</label>
+                    <input type="number" id="elevenLabsStyleInput" min="0" max="1" step="0.05" value="0.35">
+                  </div>
+                </div>
+                <div class="voice-grid">
+                  <div class="form-group">
+                    <label>Stability</label>
+                    <input type="number" id="elevenLabsStabilityInput" min="0" max="1" step="0.05" value="0.45">
+                  </div>
+                  <div class="form-group">
+                    <label>Similarity Boost</label>
+                    <input type="number" id="elevenLabsSimilarityInput" min="0" max="1" step="0.05" value="0.85">
+                  </div>
+                </div>
+              </div>
+
+              <div class="cc-card" data-cc-value="xai" data-cc-label="xAI / Grok">
+                <div class="form-group">
+                  <label>xAI API Key</label>
+                  <div class="api-key-wrapper"><input type="password" id="xaiKeyInput" placeholder="xai-..." autocomplete="off"><button class="toggle-visibility" onclick="toggleXaiKeyVis()">👁</button></div>
+                  <div class="hint">For Grok/xAI text-to-speech. Separate from OpenRouter.</div>
+                </div>
+                <div class="voice-grid">
+                  <div class="form-group">
+                    <label>xAI Voice ID</label>
+                    <input type="text" id="xaiVoiceIdInput" placeholder="eve or custom voice ID" autocomplete="off">
+                  </div>
+                  <div class="form-group">
+                    <label>Language</label>
+                    <input type="text" id="xaiLanguageInput" placeholder="en" autocomplete="off">
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
-          <div class="form-group">
+          <div class="form-group" style="margin-top:6px">
             <label>Speed</label>
             <div class="slider-row"><input type="range" id="voiceSpeedSlider" min="0.7" max="1.5" step="0.05" value="1.0"><span class="slider-val" id="voiceSpeedVal">1.00</span></div>
             <div class="hint">1.0 is natural pace. Lower for slower, higher for faster.</div>
           </div>
           <button class="action-btn" style="width:100%;margin-bottom:8px" onclick="testVoice()">▶ Test selected voice</button>
-          <div class="hint">The selected provider is saved with the rest of your settings.</div>
+          <div class="hint">The voice on the visible card is the one that's used. Saved with the rest of your settings.</div>
         </div>
       </div>
       <div class="section-divider" onclick="toggleSection('supabaseSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> Supabase (Cloud Sync)</div>
@@ -763,7 +886,20 @@ html, body {
           </div>
         </div>
       </div>
-      <div class="section-divider" onclick="toggleSection('paramsSection',this)"><span class="toggle-arrow collapsed">▼</span> Sampling Parameters</div>
+      <button class="save-btn" onclick="saveSettings()">Save Keys</button>
+    </div>
+
+    <!-- ===== CALIBRATIONS TAB ===== -->
+    <div class="modal-body" id="calibrationsTab" style="display:none">
+      <div class="section-divider" onclick="toggleSection('memRetrievalSection',this)"><span class="toggle-arrow collapsed">▼</span> Memory Retrieval</div>
+      <div class="collapsible-section collapsed" id="memRetrievalSection">
+        <div style="padding-top:12px">
+          <div class="form-group"><label>Context Messages</label><div class="slider-row"><input type="range" id="contextSlider" min="2" max="60" step="2" value="10"><span class="slider-val" id="contextVal">10</span></div><div class="hint">How many recent messages are sent to the API.</div></div>
+          <div class="form-group"><label>Max Memories Per Message</label><div class="slider-row"><input type="range" id="maxMemSlider" min="1" max="10" step="1" value="3"><span class="slider-val" id="maxMemVal">3</span></div></div>
+          <div class="form-group"><label>Semantic Match Threshold</label><div class="slider-row"><input type="range" id="thresholdSlider" min="0.2" max="0.8" step="0.05" value="0.4"><span class="slider-val" id="thresholdVal">0.40</span></div><div class="hint">How similar a memory must be to your message to fire. Lower = more eager, higher = pickier. Default 0.40.</div></div>
+        </div>
+      </div>
+      <div class="section-divider" onclick="toggleSection('paramsSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> Sampling Parameters</div>
       <div class="collapsible-section collapsed" id="paramsSection">
         <div style="padding-top:12px">
           <div class="slider-row"><label>Temperature</label><input type="range" id="paramTemp" min="0" max="2" step="0.05" value="0.85"><span class="slider-val" id="valTemp">0.85</span></div>
@@ -777,77 +913,109 @@ html, body {
           <div class="hint">Max Tokens 0 = unlimited. Repetition Penalty 1.0 = off.</div>
         </div>
       </div>
-      <div class="section-divider" onclick="toggleSection('modelsSection',this)"><span class="toggle-arrow collapsed">▼</span> Custom Models</div>
-      <div class="collapsible-section collapsed" id="modelsSection">
-        <div style="padding-top:12px"><div class="hint" style="margin-bottom:10px">Format: provider/model</div><div id="customModelsList"></div><button class="add-btn" onclick="addCustomModelRow()">+ Add model</button></div>
-      </div>
-      <div class="section-divider" onclick="toggleSection('dataSection',this)"><span class="toggle-arrow collapsed">▼</span> Data & Backup</div>
-      <div class="collapsible-section collapsed" id="dataSection">
+      <div class="section-divider" onclick="toggleSection('displayThemeSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> Display Theme</div>
+      <div class="collapsible-section collapsed" id="displayThemeSection">
         <div style="padding-top:12px">
+          <input type="hidden" id="themeSelect">
+          <div class="card-carousel" id="themeCarousel">
+            <div class="cc-nav">
+              <button type="button" class="cc-arrow cc-prev" onclick="ccStep('themeCarousel',-1)" aria-label="Previous">‹</button>
+              <div class="cc-title"></div>
+              <button type="button" class="cc-arrow cc-next" onclick="ccStep('themeCarousel',1)" aria-label="Next">›</button>
+            </div>
+            <div class="cc-dots"></div>
+            <div class="cc-stage">
+              <div class="cc-card" data-cc-value="auto" data-cc-label="Auto">
+                <div class="theme-swatch-row">
+                  <div class="theme-swatch" style="background:#151210"></div>
+                  <div class="theme-swatch" style="background:#faf5ef"></div>
+                  <div class="theme-swatch" style="background:linear-gradient(135deg,#151210 50%,#faf5ef 50%)"></div>
+                </div>
+                <div class="theme-card-label">Auto (follow device)</div>
+                <div class="theme-card-desc">Switches with your device's day/night setting.</div>
+              </div>
+              <div class="cc-card" data-cc-value="light" data-cc-label="Light">
+                <div class="theme-swatch-row">
+                  <div class="theme-swatch" style="background:#faf5ef"></div>
+                  <div class="theme-swatch" style="background:#e8dfce"></div>
+                  <div class="theme-swatch" style="background:#6f4f30"></div>
+                </div>
+                <div class="theme-card-label">Light (day)</div>
+                <div class="theme-card-desc">Warm paper tones with a deep walnut accent.</div>
+              </div>
+              <div class="cc-card" data-cc-value="dark" data-cc-label="Dark">
+                <div class="theme-swatch-row">
+                  <div class="theme-swatch" style="background:#151210"></div>
+                  <div class="theme-swatch" style="background:#24201b"></div>
+                  <div class="theme-swatch" style="background:#c4956a"></div>
+                </div>
+                <div class="theme-card-label">Dark (night)</div>
+                <div class="theme-card-desc">Low-light espresso tones with a soft amber accent.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <button class="save-btn" onclick="saveSettings(); saveMemorySettings();">Save Calibrations</button>
+    </div>
+
+    <!-- ===== EXPORTS TAB ===== -->
+    <div class="modal-body" id="exportsTab" style="display:none">
+      <div class="section-divider" onclick="toggleSection('exportSection',this)"><span class="toggle-arrow collapsed">▼</span> Export</div>
+      <div class="collapsible-section collapsed" id="exportSection">
+        <div style="padding-top:12px">
+          <label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:8px">Full Backup</label>
           <div class="action-row">
             <button class="action-btn" onclick="exportAll()">Export JSON</button>
             <button class="action-btn" onclick="exportAllMarkdown()">Export Markdown</button>
           </div>
           <div class="hint" style="margin-top:6px">JSON is a full backup (re-importable). Markdown is a human-readable transcript.</div>
-          <div class="action-row" style="margin-top:12px">
+          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+            <label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:8px">Memory Cards</label>
+            <div class="action-row">
+              <button class="action-btn" onclick="exportMemories()">Export JSON</button>
+              <button class="action-btn" onclick="exportMemoriesMarkdown()">Export Markdown</button>
+            </div>
+            <div class="hint" style="margin-top:6px">JSON for re-importing. Markdown for reading or feeding to a model.</div>
+          </div>
+        </div>
+      </div>
+      <div class="section-divider" onclick="toggleSection('importSection',this)" style="margin-top:0;border-top:none"><span class="toggle-arrow collapsed">▼</span> Import</div>
+      <div class="collapsible-section collapsed" id="importSection">
+        <div style="padding-top:12px">
+          <label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:8px">Full Backup</label>
+          <div class="action-row">
             <button class="action-btn" onclick="document.getElementById('importFile').click()">Import JSON</button>
             <input type="file" id="importFile" accept=".json" style="display:none" onchange="importAll(event)">
           </div>
           <div class="hint" style="margin-top:6px">Import replaces all current chats, memories, and settings with the contents of the backup.</div>
-          <div class="action-row" style="margin-top:16px"><button class="action-btn" onclick="clearAllData()" style="border-color:var(--danger);color:var(--danger)">Delete everything</button></div>
+          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+            <label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:8px">Memory Cards</label>
+            <div class="action-row">
+              <button class="action-btn" onclick="document.getElementById('memFragmentFile').click()">Import Markdown File</button>
+              <input type="file" id="memFragmentFile" accept=".md,text/markdown,text/plain" style="display:none" onchange="importMemoryFragments(event)">
+            </div>
+            <div class="hint" style="margin-top:6px">Markdown with <code>## Title</code> headings is treated as pre-structured fragments. Raw conversation logs (no headings) are scanned and split into multiple cards automatically.</div>
+            <div style="margin-top:12px">
+              <label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:8px">Or paste text directly</label>
+              <textarea id="memFragmentPaste" placeholder="Paste a conversation log or pre-structured markdown (## Title format). The model decides whether to split into multiple cards." style="min-height:120px;font-family:'JetBrains Mono',monospace;font-size:12px"></textarea>
+              <button class="action-btn" style="margin-top:8px;width:100%" onclick="importMemoryFragmentsFromPaste()">Import Pasted Text</button>
+            </div>
+          </div>
+          <div style="margin-top:16px;padding-top:14px;border-top:1px solid var(--border)">
+            <div class="action-row"><button class="action-btn" onclick="clearAllData()" style="border-color:var(--danger);color:var(--danger)">Delete everything</button></div>
+            <div class="hint" style="margin-top:6px">Wipes all local chats, memories, and settings. Cannot be undone.</div>
+          </div>
         </div>
       </div>
-      <button class="save-btn" onclick="saveSettings()">Save Settings</button>
     </div>
-    <div class="modal-body" id="memoryTab" style="display:none">
-      <div class="form-group"><label>Context Messages</label><div class="slider-row"><input type="range" id="contextSlider" min="2" max="60" step="2" value="10"><span class="slider-val" id="contextVal">10</span></div><div class="hint">How many recent messages are sent to the API.</div></div>
-      <div class="form-group"><label>Max Memories Per Message</label><div class="slider-row"><input type="range" id="maxMemSlider" min="1" max="10" step="1" value="3"><span class="slider-val" id="maxMemVal">3</span></div></div>
-      <div class="form-group"><label>Semantic Match Threshold</label><div class="slider-row"><input type="range" id="thresholdSlider" min="0.2" max="0.8" step="0.05" value="0.4"><span class="slider-val" id="thresholdVal">0.40</span></div><div class="hint">How similar a memory must be to your message to fire. Lower = more eager, higher = pickier. Default 0.40.</div></div>
-      <div style="border-top:1px solid var(--border);margin:20px 0 16px;padding-top:16px">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
-          <label style="font-size:12px;font-weight:500;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin:0">Memory Cards</label>
-          <button class="add-btn" style="width:auto;padding:6px 14px;font-size:11px" onclick="openMemoryEditor(null)">+ New</button>
-        </div>
-        <div class="hint" style="margin-bottom:12px">Memories load by semantic similarity to your message. Pinned ones always load.</div>
-        <div class="form-group" style="margin-bottom:12px">
-          <label>Search Memory Cards</label>
-          <input type="search" id="memorySearchInput" placeholder="Search title, context, or keywords..." oninput="renderMemoryCards()">
-        </div>
-        <div id="memoryCardsList"></div>
+
+    <!-- ===== MEMBERSHIP TAB ===== -->
+    <div class="modal-body" id="membershipTab" style="display:none">
+      <div style="text-align:center;padding:40px 20px;color:var(--text-muted)">
+        <div style="font-family:'Libre Baskerville',serif;font-size:18px;color:var(--text-secondary);margin-bottom:10px">Membership</div>
+        <div class="hint" style="max-width:260px;margin:0 auto">Coming soon. This is where plans and account membership will live.</div>
       </div>
-      <div class="section-divider" onclick="toggleSection('memMigrateSection',this)" style="margin-top:8px"><span class="toggle-arrow collapsed">▼</span> Regenerate Keywords & Vectors</div>
-      <div class="collapsible-section collapsed" id="memMigrateSection">
-        <div style="padding-top:12px">
-          <div class="hint" style="margin-bottom:10px">Regenerates keywords and vectors for all cards. Does not change card names, content, IDs, pin, or enabled flags.</div>
-          <button class="action-btn" style="width:100%" onclick="regenerateKeywordsAndVectors()">Regenerate keywords & vectors</button>
-        </div>
-      </div>
-      <div class="section-divider" onclick="toggleSection('memExportSection',this)" style="margin-top:8px"><span class="toggle-arrow collapsed">▼</span> Export Memory Cards</div>
-      <div class="collapsible-section collapsed" id="memExportSection">
-        <div style="padding-top:12px">
-          <div class="action-row">
-            <button class="action-btn" onclick="exportMemories()">Export JSON</button>
-            <button class="action-btn" onclick="exportMemoriesMarkdown()">Export Markdown</button>
-          </div>
-          <div class="hint" style="margin-top:6px">JSON for re-importing. Markdown for reading or feeding to a model.</div>
-        </div>
-      </div>
-      <div class="section-divider" onclick="toggleSection('memImportSection',this)" style="margin-top:8px"><span class="toggle-arrow collapsed">▼</span> Import Memory Fragments</div>
-      <div class="collapsible-section collapsed" id="memImportSection">
-        <div style="padding-top:12px">
-          <div class="action-row">
-            <button class="action-btn" onclick="document.getElementById('memFragmentFile').click()">Import Markdown File</button>
-            <input type="file" id="memFragmentFile" accept=".md,text/markdown,text/plain" style="display:none" onchange="importMemoryFragments(event)">
-          </div>
-          <div class="hint" style="margin-top:6px">Markdown with <code>## Title</code> headings is treated as pre-structured fragments. Raw conversation logs (no headings) are scanned and split into multiple cards automatically.</div>
-          <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
-            <label style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;display:block;margin-bottom:8px">Or paste text directly</label>
-            <textarea id="memFragmentPaste" placeholder="Paste a conversation log or pre-structured markdown (## Title format). The model decides whether to split into multiple cards." style="min-height:120px;font-family:'JetBrains Mono',monospace;font-size:12px"></textarea>
-            <button class="action-btn" style="margin-top:8px;width:100%" onclick="importMemoryFragmentsFromPaste()">Import Pasted Text</button>
-          </div>
-        </div>
-      </div>
-      <button class="save-btn" onclick="saveMemorySettings()">Save Memory Settings</button>
     </div>
   </div>
 </div>
@@ -2934,22 +3102,90 @@ function clamp01(v) {
   return Math.max(0, Math.min(1, v));
 }
 
-function selectVoiceProvider(provider) {
-  ensureVoiceState();
-  captureVoicePanelInputs();
-  state.voice.provider = provider;
-  renderVoiceProviderUI();
+// ===== GENERIC FULL-CARD CAROUSEL =====
+// Drives Voice, API Key, and Theme carousels. One card visible at a time.
+// Each carousel is a container with .cc-stage holding .cc-card children, each
+// carrying data-cc-value and data-cc-label. Arrows/dots/swipe move between them.
+// onSelect(value) fires whenever the visible card changes.
+const ccState = {};
+const ccCallbacks = {};
+
+function ccInit(id, onSelect) {
+  ccCallbacks[id] = onSelect || null;
+  const root = document.getElementById(id);
+  if (!root) return;
+  const stage = root.querySelector('.cc-stage');
+  const cards = [...stage.querySelectorAll('.cc-card')];
+  if (ccState[id] == null) ccState[id] = 0;
+  // Build dots
+  const dotsWrap = root.querySelector('.cc-dots');
+  if (dotsWrap && !dotsWrap.dataset.built) {
+    dotsWrap.innerHTML = cards.map(() => '<span class="cc-dot"></span>').join('');
+    dotsWrap.dataset.built = '1';
+  }
+  // Swipe
+  if (!stage.dataset.swipe) {
+    let x0 = null;
+    stage.addEventListener('touchstart', e => { x0 = e.touches[0].clientX; }, { passive: true });
+    stage.addEventListener('touchend', e => {
+      if (x0 == null) return;
+      const dx = e.changedTouches[0].clientX - x0;
+      if (Math.abs(dx) > 40) ccStep(id, dx < 0 ? 1 : -1);
+      x0 = null;
+    }, { passive: true });
+    stage.dataset.swipe = '1';
+  }
+  ccRender(id, true);  // suppress callback on init — don't mutate saved state
 }
 
-function renderVoiceProviderUI() {
+function ccStep(id, dir) {
+  const root = document.getElementById(id);
+  const cards = [...root.querySelectorAll('.cc-card')];
+  let i = (ccState[id] || 0) + dir;
+  i = Math.max(0, Math.min(cards.length - 1, i));
+  ccState[id] = i;
+  ccRender(id);  // real user navigation — callback fires
+}
+
+function ccGoTo(id, value) {
+  const root = document.getElementById(id);
+  if (!root) return;
+  const cards = [...root.querySelectorAll('.cc-card')];
+  const idx = cards.findIndex(c => c.dataset.ccValue === value);
+  if (idx >= 0) { ccState[id] = idx; ccRender(id, true); }  // programmatic positioning — suppress callback
+}
+
+function ccRender(id, suppressCallback) {
+  const root = document.getElementById(id);
+  if (!root) return;
+  const cards = [...root.querySelectorAll('.cc-card')];
+  const i = ccState[id] || 0;
+  cards.forEach((c, n) => c.classList.toggle('active', n === i));
+  const title = root.querySelector('.cc-title');
+  if (title && cards[i]) title.textContent = cards[i].dataset.ccLabel || '';
+  const dots = [...root.querySelectorAll('.cc-dot')];
+  dots.forEach((d, n) => d.classList.toggle('active', n === i));
+  const prev = root.querySelector('.cc-arrow.cc-prev');
+  const next = root.querySelector('.cc-arrow.cc-next');
+  if (prev) prev.disabled = i === 0;
+  if (next) next.disabled = i === cards.length - 1;
+  if (suppressCallback) return;
+  const cb = ccCallbacks[id];
+  if (cb && cards[i]) cb(cards[i].dataset.ccValue);
+}
+
+// Voice carousel: selecting a card sets the active TTS provider.
+function onVoiceCardSelect(provider) {
   ensureVoiceState();
-  const provider = activeVoiceProvider();
-  document.querySelectorAll('.voice-provider-card').forEach(card => {
-    card.classList.toggle('active', card.dataset.provider === provider);
-  });
-  document.querySelectorAll('.voice-panel').forEach(panel => {
-    panel.classList.toggle('active', panel.id === `voicePanel-${provider}`);
-  });
+  if (state.voice.provider !== provider) {
+    captureVoicePanelInputs();
+    state.voice.provider = provider;
+  }
+}
+
+// Theme carousel: landing on a card applies it live (preview before save).
+function onThemeCardSelect(theme) {
+  setThemePreference(theme);
 }
 
 function loadVoiceSettingsIntoUI() {
@@ -2973,7 +3209,8 @@ function loadVoiceSettingsIntoUI() {
   setVal('xaiVoiceIdInput', xai.voiceId || 'eve');
   setVal('xaiLanguageInput', xai.language || 'en');
   setSlider('voiceSpeedSlider', 'voiceSpeedVal', v.speed || state.voiceSpeed || 1.0);
-  renderVoiceProviderUI();
+  ccInit('voiceCarousel', onVoiceCardSelect);
+  ccGoTo('voiceCarousel', activeVoiceProvider());
 }
 
 async function playOpenAITTS(text, speed) {
@@ -3844,11 +4081,13 @@ function closeSidebar() {
 // ===== SETTINGS =====
 function openSettings() {
   closeSidebar();
-  // Reset to Settings tab
+  // Reset to Keys tab (first tab)
   document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
-  document.querySelector('.settings-tab[data-tab="settingsTab"]').classList.add('active');
-  document.getElementById('settingsTab').style.display = '';
-  document.getElementById('memoryTab').style.display = 'none';
+  document.querySelector('.settings-tab[data-tab="keysTab"]').classList.add('active');
+  ['injectionsTab','keysTab','calibrationsTab','exportsTab','membershipTab'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = id === 'keysTab' ? '' : 'none';
+  });
   document.getElementById('themeSelect').value = getThemePreference();
   document.getElementById('apiKeyInput').value = state.apiKey;
   document.getElementById('supabaseUrlInput').value = localStorage.getItem('haven_supabase_url') || '';
@@ -3882,6 +4121,10 @@ function openSettings() {
   setSlider('paramMaxTok', 'valMaxTok', state.params.max_tokens, true);
   updateSystemPromptTokens();
   renderCustomModels();
+  renderMemoryCards();
+  ccInit('keyCarousel');
+  ccInit('themeCarousel', onThemeCardSelect);
+  ccGoTo('themeCarousel', getThemePreference());
   // Voice settings
   loadVoiceSettingsIntoUI();
   document.getElementById('settingsModal').classList.add('open');
@@ -3891,12 +4134,20 @@ function closeSettings() {
   document.getElementById('settingsModal').classList.remove('open');
 }
 
+function scrollTabs(dir) {
+  const row = document.getElementById('settingsTabsRow');
+  if (row) row.scrollBy({ left: dir * 140, behavior: 'smooth' });
+}
+
 function switchSettingsTab(tabId, btn) {
   document.querySelectorAll('.settings-tab').forEach(t => t.classList.remove('active'));
   btn.classList.add('active');
-  document.getElementById('settingsTab').style.display = tabId === 'settingsTab' ? '' : 'none';
-  document.getElementById('memoryTab').style.display = tabId === 'memoryTab' ? '' : 'none';
-  if (tabId === 'memoryTab') renderMemoryCards();
+  ['injectionsTab','keysTab','calibrationsTab','exportsTab','membershipTab'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = id === tabId ? '' : 'none';
+  });
+  if (tabId === 'injectionsTab') renderMemoryCards();
+  if (tabId === 'keysTab') loadVoiceSettingsIntoUI();
 }
 
 function saveMemorySettings() {
