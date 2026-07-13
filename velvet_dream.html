@@ -643,7 +643,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v37</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v37A</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -1351,8 +1351,7 @@ async function pullChatsFromCloud() {
     if (!existing || (chat.updatedAt || 0) > (existing.updatedAt || 0)) map.set(chat.id, chat);
     else if (existing && chat.updatedAt === existing.updatedAt && (chat.messages?.length || 0) > (existing.messages?.length || 0)) map.set(chat.id, chat);
   });
-  state.chats = [...map.values()].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-  normalizeAllThreadTrackingState();
+  state.chats = [...map.values()].sort((a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0));
 }
 
 // Pull memories from user_memories and merge with local by updatedAt.
@@ -1447,6 +1446,7 @@ let editingMemoryId = null;
 let editingMessageState = null;
 let abortController = null;
 let pendingImages = [];
+const threadUpdateInFlight = new Set();
 
 // ===== THREAD TRACKING INFRASTRUCTURE =====
 // Message IDs and summary-entry ranges are hidden metadata. They let the code
@@ -1480,11 +1480,21 @@ function getMessageText(msg) {
 }
 
 function deriveThreadSummary(thread) {
-  if (!thread || !Array.isArray(thread.summaryEntries)) return String(thread?.summary || '').trim();
-  return thread.summaryEntries
-    .map(entry => String(entry?.text || '').trim())
-    .filter(Boolean)
-    .join('\n\n');
+  if (!thread) return '';
+  const parts = [];
+  const legacySummary = String(thread.legacySummary || '').trim();
+  if (legacySummary) parts.push(legacySummary);
+
+  if (Array.isArray(thread.summaryEntries)) {
+    parts.push(...thread.summaryEntries
+      .map(entry => String(entry?.text || '').trim())
+      .filter(Boolean));
+  } else if (!legacySummary) {
+    const existingSummary = String(thread.summary || '').trim();
+    if (existingSummary) parts.push(existingSummary);
+  }
+
+  return parts.join('\n\n');
 }
 
 function syncThreadSummary(thread) {
@@ -1493,74 +1503,24 @@ function syncThreadSummary(thread) {
   return thread.summary;
 }
 
-function normalizeChatThreadTracking(chat) {
-  if (!chat) return false;
-  let changed = false;
+// Forward-only tracking: existing chats are left untouched until the user adds
+// a new message. At that point, old summaries become an immutable baseline and
+// only new messages receive tracked summary entries.
+function initializeForwardThreadTracking(chat) {
+  if (!chat || chat.threadTrackingVersion === 1) return;
   if (!Array.isArray(chat.messages)) chat.messages = [];
   if (!Array.isArray(chat.threads)) chat.threads = [];
-
-  const seenMessageIds = new Set();
-  for (const msg of chat.messages) {
-    if (!msg || typeof msg !== 'object') continue;
-    if (!msg.id || seenMessageIds.has(msg.id)) {
-      msg.id = makeStableId('msg');
-      changed = true;
-    }
-    seenMessageIds.add(msg.id);
-  }
-
-  const firstMessageId = chat.messages[0]?.id || null;
-  const summarizedCount = Number.isInteger(chat.lastThreadUpdateAt)
-    ? Math.min(Math.max(chat.lastThreadUpdateAt, 0), chat.messages.length)
-    : chat.messages.length;
-  const lastSummarizedMessageId = summarizedCount > 0
-    ? chat.messages[summarizedCount - 1]?.id
-    : (chat.messages[chat.messages.length - 1]?.id || null);
 
   for (const thread of chat.threads) {
     if (!thread || typeof thread !== 'object') continue;
     if (!Array.isArray(thread.summaryEntries)) {
-      const legacySummary = String(thread.summary || '').trim();
-      thread.summaryEntries = legacySummary && firstMessageId && lastSummarizedMessageId
-        ? [{
-            id: makeStableId('sum'),
-            fromMessageId: firstMessageId,
-            toMessageId: lastSummarizedMessageId,
-            text: legacySummary,
-            legacy: true
-          }]
-        : [];
-      changed = true;
-    }
-    for (const entry of thread.summaryEntries) {
-      if (!entry || typeof entry !== 'object') continue;
-      if (!entry.id) { entry.id = makeStableId('sum'); changed = true; }
-      if (entry.text === undefined && entry.summary !== undefined) {
-        entry.text = String(entry.summary || '');
-        changed = true;
-      }
-    }
-    const derived = deriveThreadSummary(thread);
-    if (String(thread.summary || '').trim() !== derived) {
-      thread.summary = derived;
-      changed = true;
+      thread.legacySummary = String(thread.summary || '').trim();
+      thread.summaryEntries = [];
     }
   }
 
-  if (chat.threadTrackingVersion !== 1) {
-    chat.threadTrackingVersion = 1;
-    changed = true;
-  }
-  if (changed) chat.updatedAt = Date.now();
-  return changed;
-}
-
-function normalizeAllThreadTrackingState() {
-  let changed = false;
-  for (const chat of (state.chats || [])) {
-    if (normalizeChatThreadTracking(chat)) changed = true;
-  }
-  return changed;
+  chat.threadTrackingVersion = 1;
+  chat.lastThreadUpdateAt = chat.messages.length;
 }
 
 function getMessageIndexMap(chat) {
@@ -1572,16 +1532,30 @@ function getMessageIndexMap(chat) {
 }
 
 function getSummaryEntryIndexes(entry, indexMap) {
+  if (entry?.legacy) return null;
   const from = indexMap.get(entry?.fromMessageId);
   const to = indexMap.get(entry?.toMessageId);
   if (!Number.isInteger(from) || !Number.isInteger(to)) return null;
   return { start: Math.min(from, to), end: Math.max(from, to) };
 }
 
+function getCurrentThread(chat) {
+  if (!chat?.threads?.length) return null;
+  const indexMap = getMessageIndexMap(chat);
+  const latestIndex = (thread) => Math.max(-1, ...(thread.summaryEntries || []).map(entry => {
+    const range = getSummaryEntryIndexes(entry, indexMap);
+    return range ? range.end : -1;
+  }));
+
+  return [...chat.threads].sort((a, b) =>
+    latestIndex(b) - latestIndex(a)
+    || (b.lastTouchedTurn || 0) - (a.lastTouchedTurn || 0)
+  )[0] || null;
+}
+
 // Remove tracked summary material from the first affected chunk onward. The
 // model will rebuild only that range; everything before it remains untouched.
 function prepareThreadRebuildFromMessage(chat, messageId) {
-  normalizeChatThreadTracking(chat);
   const indexMap = getMessageIndexMap(chat);
   const targetIndex = indexMap.get(messageId);
   if (!Number.isInteger(targetIndex)) return null;
@@ -1599,13 +1573,14 @@ function prepareThreadRebuildFromMessage(chat, messageId) {
   const survivingThreads = [];
   for (const thread of (chat.threads || [])) {
     const keptEntries = (thread.summaryEntries || []).filter(entry => {
+      if (entry?.legacy) return true;
       const range = getSummaryEntryIndexes(entry, indexMap);
       return range && range.end < rebuildIndex;
     });
     thread.summaryEntries = keptEntries;
     syncThreadSummary(thread);
     thread.needsReconcile = false;
-    if (keptEntries.length > 0) {
+    if (keptEntries.length > 0 || String(thread.legacySummary || '').trim()) {
       thread.lastTouchedTurn = Math.min(thread.lastTouchedTurn ?? rebuildIndex, rebuildIndex);
       survivingThreads.push(thread);
     }
@@ -1684,7 +1659,6 @@ async function loadState() {
     db.close();
     if (saved) state = deepMerge(state, saved);
     ensureVoiceState();
-    normalizeAllThreadTrackingState();
     state.isStreaming = false;
     // Backfill startedModel for chats that pre-date this field
     if (state.chats && state.chats.length) {
@@ -1994,11 +1968,11 @@ function getModelDisplayName(id) {
 function renderChatList() {
   const list = document.getElementById('chatList');
   list.innerHTML = '';
-  [...state.chats].sort((a, b) => b.updatedAt - a.updatedAt).forEach(chat => {
+  [...state.chats].sort((a, b) => (b.createdAt || b.updatedAt || 0) - (a.createdAt || a.updatedAt || 0)).forEach(chat => {
     const div = document.createElement('div');
     div.className = 'chat-item' + (chat.id === state.activeChatId ? ' active' : '');
     const title = chat.title || chat.messages.find(m => m.role === 'user')?.content?.slice(0, 50) || 'New conversation';
-    const d = new Date(chat.updatedAt);
+    const d = new Date(chat.createdAt || chat.updatedAt || Date.now());
     const modelName = getModelDisplayName(chat.startedModel || chat.model || '');
     div.innerHTML = `
       <div class="chat-item-main">
@@ -2057,6 +2031,7 @@ function newChat() {
     id: 'chat_' + Date.now(), title: '', messages: [], summary: '',
     model: currentModel, startedModel: currentModel,
     threads: [],  // session state — populated by updateSessionThreads after each turn
+    threadTrackingVersion: 1, lastThreadUpdateAt: 0,
     createdAt: Date.now(), updatedAt: Date.now()
   };
   state.chats.push(c);
@@ -2094,20 +2069,18 @@ function deleteChat(id) {
 }
 
 function getActiveChat() {
-  const chat = state.chats.find(c => c.id === state.activeChatId);
-  if (chat) normalizeChatThreadTracking(chat);
-  return chat;
+  return state.chats.find(c => c.id === state.activeChatId);
 }
+
 
 // ===== MEMORY =====
 // Approximate human-readable age of a memory card, for injection into the
 // prompt so the model can weight recency. Uses updatedAt if present, else
 // createdAt. Breakpoints are intentionally coarse — the model only needs a
 // rough sense of old vs recent.
-function memoryAgeLabel(card) {
-  const ts = card.updatedAt || card.createdAt || card.capturedAt;
+function relativeAgeLabel(ts) {
   if (!ts) return 'undated';
-  const diffMs = Date.now() - ts;
+  const diffMs = Math.max(0, Date.now() - ts);
   const min = Math.floor(diffMs / 60000);
   if (min < 1) return 'just now';
   if (min < 60) return `${min} minute${min === 1 ? '' : 's'} ago`;
@@ -2121,6 +2094,14 @@ function memoryAgeLabel(card) {
   if (mo < 12) return `${mo} month${mo === 1 ? '' : 's'} ago`;
   const yr = Math.floor(day / 365);
   return `${yr} year${yr === 1 ? '' : 's'} ago`;
+}
+
+function memoryAgeLabel(card) {
+  return relativeAgeLabel(card.updatedAt || card.createdAt || card.capturedAt);
+}
+
+function memoryCreatedAgeLabel(card) {
+  return relativeAgeLabel(card.capturedAt || card.createdAt || card.updatedAt);
 }
 
 // Embed a string using OpenAI text-embedding-3-small via OpenRouter.
@@ -2796,6 +2777,7 @@ function fastThreadMaintenance(chat) {
   const windowSize = state.contextMessages || 8;
   const archiveAfter = Math.max(1, Math.floor(windowSize / 2));
   const turnCount = chat.messages.length;
+  const currentThreadId = getCurrentThread(chat)?.id || null;
 
   // Active threads check against last 2 messages (your last + Kai's last)
   const lastTwo = (chat.messages || [])
@@ -2810,6 +2792,10 @@ function fastThreadMaintenance(chat) {
   };
 
   for (const t of chat.threads) {
+    if (t.id === currentThreadId) {
+      t.archived = false;
+      continue;
+    }
     if (!t.archived) {
       const matched = getThreadMatchTerms(t).some(term => wordMatch(term, lastTwo));
       if (matched) {
@@ -2924,6 +2910,7 @@ async function sendMessage() {
 
   const chat = getActiveChat();
   chat.model = document.getElementById('modelSelect').value;
+  initializeForwardThreadTracking(chat);
 
   let userContent;
   if (pendingImages.length > 0) {
@@ -3280,6 +3267,10 @@ function editMessage(idx) {
   if (!chat || state.isStreaming) return;
   const msg = chat.messages[idx];
   if (!msg || msg.role !== 'user') return;
+  if (!msg.id) {
+    showToast('Editing is available for messages created after thread tracking began');
+    return;
+  }
 
   const input = document.getElementById('inputField');
   editingMessageState = {
@@ -3850,8 +3841,22 @@ function mergeDuplicateSessionThreads(threads, turnCount) {
 //   lastTouchedTurn, archived (bool), updatesSincePromotion
 async function updateSessionThreads(chat, options = {}) {
   if (!chat || !state.apiKey) return;
+  const lockKey = chat.id || chat;
+  const alreadyRunning = threadUpdateInFlight.has(lockKey);
+  if (alreadyRunning && !options.rebuildPass) return;
+  const ownsLock = !alreadyRunning;
+  if (ownsLock) threadUpdateInFlight.add(lockKey);
+
+  try {
+    return await updateSessionThreadsUnlocked(chat, options);
+  } finally {
+    if (ownsLock) threadUpdateInFlight.delete(lockKey);
+  }
+}
+
+async function updateSessionThreadsUnlocked(chat, options = {}) {
+  if (!chat || !state.apiKey) return;
   if (!chat.messages || chat.messages.length < 2) return;
-  normalizeChatThreadTracking(chat);
 
   const windowSize = state.contextMessages || 8;
   const turnCount = chat.messages.length;
@@ -3893,18 +3898,9 @@ async function updateSessionThreads(chat, options = {}) {
   const boundaryTranscript = formatTranscript(boundaryMessages) || '(none)';
   const newTranscript = formatTranscript(newMessages);
 
-  // The append target is the thread whose tracked summary reaches latest in
-  // the conversation. Keyword reactivation may bump lastTouchedTurn on an old
-  // thread, but that must not turn it into the chronological current thread.
-  const currentThread = [...(chat.threads || [])]
-    .sort((a, b) => {
-      const latestIndex = (thread) => Math.max(-1, ...(thread.summaryEntries || []).map(entry => {
-        const range = getSummaryEntryIndexes(entry, indexMap);
-        return range ? range.end : -1;
-      }));
-      return latestIndex(b) - latestIndex(a)
-        || (b.lastTouchedTurn || 0) - (a.lastTouchedTurn || 0);
-    })[0] || null;
+  // The append target is the chronological current thread, not whichever old
+  // thread happened to reactivate by keyword.
+  const currentThread = getCurrentThread(chat);
 
   const allExistingThreads = (chat.threads || []).map(t => ({
     id: t.id,
@@ -4173,7 +4169,6 @@ Return ONLY a JSON object listing the IDs of any archived threads that were brou
   chat.threads = mergedThreads;
   chat.lastThreadUpdateAt = turnCount;
   clearThreadReconcileState(chat);
-  chat.updatedAt = Date.now();
   saveState();
   updateInfoBar([], null, chat.threads);
 
@@ -4872,7 +4867,10 @@ function renderMemoryCards() {
 
     card.innerHTML = `
       <div class="memory-card-header">
-        <span class="memory-card-name">${icon} ${escapeHtml(mem.name)}</span>
+        <div>
+          <span class="memory-card-name">${icon} ${escapeHtml(mem.name)}</span>
+          <div class="memory-card-meta" title="${new Date(mem.capturedAt || mem.createdAt || mem.updatedAt || Date.now()).toLocaleString()}">Created ${escapeHtml(memoryCreatedAgeLabel(mem))}</div>
+        </div>
         <div class="memory-card-actions">
           <button onclick="event.stopPropagation();openMemoryEditor('${mem.id}')">Edit</button>
           <button class="del" onclick="event.stopPropagation();deleteMemory('${mem.id}')">×</button>
@@ -5215,7 +5213,6 @@ function importAll(event) {
         if (d[k] !== undefined) state[k] = d[k];
       });
       ensureVoiceState();
-      normalizeAllThreadTrackingState();
       if (d.params) state.params = { ...state.params, ...d.params };
       if (d.chats?.length) state.activeChatId = d.chats[d.chats.length - 1].id;
       saveState();
