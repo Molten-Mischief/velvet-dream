@@ -404,6 +404,18 @@ html, body {
 
 /* ===== INPUT ===== */
 .input-area { padding: 8px 24px 24px; background: transparent; flex-shrink: 0; max-width: 800px; width: 100%; margin: 0 auto; }
+.edit-status-bar {
+  display: none; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 0 0 8px; padding: 8px 12px; border: 1px solid var(--accent-dim);
+  border-radius: var(--radius-sm); background: var(--accent-subtle);
+  color: var(--text-secondary); font-size: 12px;
+}
+.edit-status-bar.visible { display: flex; }
+.edit-cancel-btn {
+  border: none; background: none; color: var(--accent); font-family: 'DM Sans', sans-serif;
+  font-size: 12px; font-weight: 600; cursor: pointer; padding: 2px 4px;
+}
+.edit-cancel-btn:hover { color: var(--text-primary); }
 .input-wrapper { display: flex; gap: 8px; align-items: flex-end; }
 
 /* ===== JUMP TO BOTTOM ===== */
@@ -631,7 +643,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v36j</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v37</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -656,6 +668,10 @@ html, body {
     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
   </button>
   <div class="input-area">
+    <div class="edit-status-bar" id="editStatusBar">
+      <span>Editing message</span>
+      <button class="edit-cancel-btn" type="button" onclick="cancelMessageEdit()">Cancel</button>
+    </div>
     <div class="image-preview-row" id="imagePreviewRow"></div>
     <div class="input-wrapper">
       <button class="attach-btn" onclick="document.getElementById('imageInput').click()">+</button>
@@ -1336,6 +1352,7 @@ async function pullChatsFromCloud() {
     else if (existing && chat.updatedAt === existing.updatedAt && (chat.messages?.length || 0) > (existing.messages?.length || 0)) map.set(chat.id, chat);
   });
   state.chats = [...map.values()].sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+  normalizeAllThreadTrackingState();
 }
 
 // Pull memories from user_memories and merge with local by updatedAt.
@@ -1427,8 +1444,196 @@ function ensureVoiceState() {
 }
 
 let editingMemoryId = null;
+let editingMessageState = null;
 let abortController = null;
 let pendingImages = [];
+
+// ===== THREAD TRACKING INFRASTRUCTURE =====
+// Message IDs and summary-entry ranges are hidden metadata. They let the code
+// locate exactly which part of a thread became stale after an edited message.
+function makeStableId(prefix) {
+  if (globalThis.crypto && typeof globalThis.crypto.randomUUID === 'function') {
+    return `${prefix}_${globalThis.crypto.randomUUID()}`;
+  }
+  return `${prefix}_${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function createMessage(role, content, extra = {}) {
+  return {
+    role,
+    content,
+    ...extra,
+    id: extra.id || makeStableId('msg')
+  };
+}
+
+function getMessageText(msg) {
+  if (!msg) return '';
+  if (typeof msg.content === 'string') return msg.content;
+  if (Array.isArray(msg.content)) {
+    return msg.content
+      .filter(block => block && block.type === 'text')
+      .map(block => block.text || '')
+      .join('\n');
+  }
+  return '';
+}
+
+function deriveThreadSummary(thread) {
+  if (!thread || !Array.isArray(thread.summaryEntries)) return String(thread?.summary || '').trim();
+  return thread.summaryEntries
+    .map(entry => String(entry?.text || '').trim())
+    .filter(Boolean)
+    .join('\n\n');
+}
+
+function syncThreadSummary(thread) {
+  if (!thread) return '';
+  thread.summary = deriveThreadSummary(thread);
+  return thread.summary;
+}
+
+function normalizeChatThreadTracking(chat) {
+  if (!chat) return false;
+  let changed = false;
+  if (!Array.isArray(chat.messages)) chat.messages = [];
+  if (!Array.isArray(chat.threads)) chat.threads = [];
+
+  const seenMessageIds = new Set();
+  for (const msg of chat.messages) {
+    if (!msg || typeof msg !== 'object') continue;
+    if (!msg.id || seenMessageIds.has(msg.id)) {
+      msg.id = makeStableId('msg');
+      changed = true;
+    }
+    seenMessageIds.add(msg.id);
+  }
+
+  const firstMessageId = chat.messages[0]?.id || null;
+  const summarizedCount = Number.isInteger(chat.lastThreadUpdateAt)
+    ? Math.min(Math.max(chat.lastThreadUpdateAt, 0), chat.messages.length)
+    : chat.messages.length;
+  const lastSummarizedMessageId = summarizedCount > 0
+    ? chat.messages[summarizedCount - 1]?.id
+    : (chat.messages[chat.messages.length - 1]?.id || null);
+
+  for (const thread of chat.threads) {
+    if (!thread || typeof thread !== 'object') continue;
+    if (!Array.isArray(thread.summaryEntries)) {
+      const legacySummary = String(thread.summary || '').trim();
+      thread.summaryEntries = legacySummary && firstMessageId && lastSummarizedMessageId
+        ? [{
+            id: makeStableId('sum'),
+            fromMessageId: firstMessageId,
+            toMessageId: lastSummarizedMessageId,
+            text: legacySummary,
+            legacy: true
+          }]
+        : [];
+      changed = true;
+    }
+    for (const entry of thread.summaryEntries) {
+      if (!entry || typeof entry !== 'object') continue;
+      if (!entry.id) { entry.id = makeStableId('sum'); changed = true; }
+      if (entry.text === undefined && entry.summary !== undefined) {
+        entry.text = String(entry.summary || '');
+        changed = true;
+      }
+    }
+    const derived = deriveThreadSummary(thread);
+    if (String(thread.summary || '').trim() !== derived) {
+      thread.summary = derived;
+      changed = true;
+    }
+  }
+
+  if (chat.threadTrackingVersion !== 1) {
+    chat.threadTrackingVersion = 1;
+    changed = true;
+  }
+  if (changed) chat.updatedAt = Date.now();
+  return changed;
+}
+
+function normalizeAllThreadTrackingState() {
+  let changed = false;
+  for (const chat of (state.chats || [])) {
+    if (normalizeChatThreadTracking(chat)) changed = true;
+  }
+  return changed;
+}
+
+function getMessageIndexMap(chat) {
+  const map = new Map();
+  (chat?.messages || []).forEach((msg, index) => {
+    if (msg?.id) map.set(msg.id, index);
+  });
+  return map;
+}
+
+function getSummaryEntryIndexes(entry, indexMap) {
+  const from = indexMap.get(entry?.fromMessageId);
+  const to = indexMap.get(entry?.toMessageId);
+  if (!Number.isInteger(from) || !Number.isInteger(to)) return null;
+  return { start: Math.min(from, to), end: Math.max(from, to) };
+}
+
+// Remove tracked summary material from the first affected chunk onward. The
+// model will rebuild only that range; everything before it remains untouched.
+function prepareThreadRebuildFromMessage(chat, messageId) {
+  normalizeChatThreadTracking(chat);
+  const indexMap = getMessageIndexMap(chat);
+  const targetIndex = indexMap.get(messageId);
+  if (!Number.isInteger(targetIndex)) return null;
+
+  let rebuildIndex = targetIndex;
+  for (const thread of (chat.threads || [])) {
+    for (const entry of (thread.summaryEntries || [])) {
+      const range = getSummaryEntryIndexes(entry, indexMap);
+      if (range && range.end >= targetIndex) {
+        rebuildIndex = Math.min(rebuildIndex, range.start);
+      }
+    }
+  }
+
+  const survivingThreads = [];
+  for (const thread of (chat.threads || [])) {
+    const keptEntries = (thread.summaryEntries || []).filter(entry => {
+      const range = getSummaryEntryIndexes(entry, indexMap);
+      return range && range.end < rebuildIndex;
+    });
+    thread.summaryEntries = keptEntries;
+    syncThreadSummary(thread);
+    thread.needsReconcile = false;
+    if (keptEntries.length > 0) {
+      thread.lastTouchedTurn = Math.min(thread.lastTouchedTurn ?? rebuildIndex, rebuildIndex);
+      survivingThreads.push(thread);
+    }
+  }
+
+  chat.threads = survivingThreads;
+  chat.reconcileFromMessageIndex = rebuildIndex;
+  chat.reconcileFromMessageId = chat.messages[rebuildIndex]?.id || null;
+  chat.lastThreadUpdateAt = rebuildIndex;
+  return rebuildIndex;
+}
+
+function clearThreadReconcileState(chat) {
+  if (!chat) return;
+  delete chat.reconcileFromMessageIndex;
+  delete chat.reconcileFromMessageId;
+}
+
+function updateMessageEditBar() {
+  const bar = document.getElementById('editStatusBar');
+  if (bar) bar.classList.toggle('visible', !!editingMessageState);
+}
+
+function clearMessageEditState() {
+  editingMessageState = null;
+  updateMessageEditBar();
+}
+
 
 // ===== TOKENS =====
 function estimateTokens(t) { return t ? Math.ceil(t.length / 3.5) : 0; }
@@ -1479,6 +1684,7 @@ async function loadState() {
     db.close();
     if (saved) state = deepMerge(state, saved);
     ensureVoiceState();
+    normalizeAllThreadTrackingState();
     state.isStreaming = false;
     // Backfill startedModel for chats that pre-date this field
     if (state.chats && state.chats.length) {
@@ -1845,6 +2051,7 @@ function renameChat(id, btn) {
 }
 
 function newChat() {
+  cancelMessageEdit(false);
   const currentModel = document.getElementById('modelSelect').value;
   const c = {
     id: 'chat_' + Date.now(), title: '', messages: [], summary: '',
@@ -1861,6 +2068,7 @@ function newChat() {
 }
 
 function switchChat(id) {
+  cancelMessageEdit(false);
   state.activeChatId = id;
   pendingImages = [];
   document.getElementById('imagePreviewRow').innerHTML = '';
@@ -1886,7 +2094,9 @@ function deleteChat(id) {
 }
 
 function getActiveChat() {
-  return state.chats.find(c => c.id === state.activeChatId);
+  const chat = state.chats.find(c => c.id === state.activeChatId);
+  if (chat) normalizeChatThreadTracking(chat);
+  return chat;
 }
 
 // ===== MEMORY =====
@@ -2726,7 +2936,33 @@ async function sendMessage() {
     userContent = text;
   }
 
-  chat.messages.push({ role: 'user', content: userContent });
+  const editState = editingMessageState && editingMessageState.chatId === chat.id
+    ? { ...editingMessageState }
+    : null;
+  const userMessage = createMessage('user', userContent);
+
+  if (editState) {
+    const editIndex = chat.messages.findIndex(msg => msg?.id === editState.messageId);
+    if (editIndex < 0) {
+      showToast('That message is no longer available to edit');
+      cancelMessageEdit(false);
+      return;
+    }
+
+    prepareThreadRebuildFromMessage(chat, editState.messageId);
+    chat.messages = chat.messages.slice(0, editIndex);
+    chat.messages.push(userMessage);
+
+    // If the affected chunk began at the edited message itself, its old ID was
+    // removed with the branch. Point reconciliation at the replacement message.
+    if (Number.isInteger(chat.reconcileFromMessageIndex)) {
+      chat.reconcileFromMessageId = chat.messages[chat.reconcileFromMessageIndex]?.id || userMessage.id;
+    }
+    clearMessageEditState();
+  } else {
+    chat.messages.push(userMessage);
+  }
+
   chat.updatedAt = Date.now();
   if (!chat.title) chat.title = (text || 'Image').slice(0, 60);
 
@@ -2879,7 +3115,7 @@ async function sendMessage() {
       msgEl.style.display = '';
     }
 
-    chat.messages.push({ role: 'assistant', content: full, model: realModel || chat.model });
+    chat.messages.push(createMessage('assistant', full, { model: realModel || chat.model }));
     chat.updatedAt = Date.now();
     saveState();
     renderChatList();
@@ -3037,38 +3273,53 @@ async function copyToClipboard(text) {
   }
 }
 
-// FIX #2: Edit message — remove from that point forward, put text back in input
+// Edit mode is non-destructive until Send is pressed. Cancel simply restores the
+// previous composer draft and leaves the conversation untouched.
 function editMessage(idx) {
   const chat = getActiveChat();
-  if (!chat) return;
+  if (!chat || state.isStreaming) return;
   const msg = chat.messages[idx];
-  const text = typeof msg.content === 'string' ? msg.content : msg.content.filter(b => b.type === 'text').map(b => b.text).join('\n');
-  chat.messages = chat.messages.slice(0, idx);
+  if (!msg || msg.role !== 'user') return;
 
-  // #5 RECONCILE (not wipe): any thread last touched at or after the edit point
-  // may contain content from messages that no longer exist. Flag it so the next
-  // updater run reconciles its summary against the current conversation. Threads
-  // built from earlier, still-valid messages are left untouched.
-  if (Array.isArray(chat.threads)) {
-    for (const t of chat.threads) {
-      if ((t.lastTouchedTurn ?? 0) >= idx) {
-        t.needsReconcile = true;
-      }
-    }
-    // Force the updater to run on the next send rather than waiting for cadence,
-    // so reconciliation isn't delayed a full window.
-    chat.lastThreadUpdateAt = undefined;
-  }
-
-  chat.updatedAt = Date.now();
-  saveState();
-  renderMessages();
-  renderChatList();
   const input = document.getElementById('inputField');
-  input.value = text;
+  editingMessageState = {
+    chatId: chat.id,
+    messageId: msg.id,
+    messageIndex: idx,
+    originalText: getMessageText(msg),
+    draftText: input.value,
+    draftImages: pendingImages.map(img => ({ ...img }))
+  };
+
+  pendingImages = [];
+  renderImagePreviews();
+  input.value = editingMessageState.originalText;
   autoResize(input);
+  updateMessageEditBar();
   updateSendBtn();
   input.focus();
+}
+
+function cancelMessageEdit(restoreDraft = true) {
+  if (!editingMessageState) return;
+  const input = document.getElementById('inputField');
+  const previous = editingMessageState;
+  clearMessageEditState();
+
+  if (restoreDraft) {
+    input.value = previous.draftText || '';
+    pendingImages = Array.isArray(previous.draftImages)
+      ? previous.draftImages.map(img => ({ ...img }))
+      : [];
+  } else {
+    input.value = '';
+    pendingImages = [];
+  }
+
+  renderImagePreviews();
+  autoResize(input);
+  updateSendBtn();
+  if (restoreDraft) input.focus();
 }
 
 // ===== VOICE (provider switchboard with browser fallback) =====
@@ -3517,18 +3768,22 @@ function summariesDiffer(a, b) {
 function mergeThreadObjects(primary, secondary) {
   const a = primary || {};
   const b = secondary || {};
-  const summaryParts = [];
-  if (a.summary) summaryParts.push(String(a.summary).trim());
-  if (b.summary && !summaryParts.some(s => s.includes(String(b.summary).trim()))) {
-    summaryParts.push(String(b.summary).trim());
+  const entries = [];
+  const seenEntries = new Set();
+  for (const entry of [...(a.summaryEntries || []), ...(b.summaryEntries || [])]) {
+    if (!entry || !entry.text) continue;
+    const key = `${entry.fromMessageId || ''}|${entry.toMessageId || ''}|${String(entry.text).trim()}`;
+    if (seenEntries.has(key)) continue;
+    seenEntries.add(key);
+    entries.push({ ...entry, id: entry.id || makeStableId('sum') });
   }
   const keywords = [...new Set([...(a.keywords || []), ...(b.keywords || [])]
     .map(k => String(k).toLowerCase().trim()).filter(Boolean))].slice(0, 8);
 
-  return {
+  const merged = {
     ...a,
     name: (a.name && a.name.length <= (b.name || '').length + 20) ? a.name : (b.name || a.name),
-    summary: summaryParts.join('\n\n').slice(0, 2400),
+    summaryEntries: entries,
     keywords,
     kind: a.kind || b.kind || inferThreadKind(a),
     archived: !!(a.archived && b.archived),
@@ -3536,6 +3791,8 @@ function mergeThreadObjects(primary, secondary) {
     needsReconcile: !!(a.needsReconcile || b.needsReconcile),
     updatesSincePromotion: Math.max(a.updatesSincePromotion || 0, b.updatesSincePromotion || 0)
   };
+  syncThreadSummary(merged);
+  return merged;
 }
 
 function mergeDuplicateSessionThreads(threads, turnCount) {
@@ -3589,37 +3846,66 @@ function mergeDuplicateSessionThreads(threads, turnCount) {
 // messages is about to fall OUT of the window. This avoids redundant work.
 //
 // Each thread now has:
-//   id, name, summary (prose), lastTouchedTurn, archived (bool),
-//   updatesSincePromotion (counter for portability check)
-async function updateSessionThreads(chat) {
+//   id, name, summaryEntries (message-linked append-only chunks), summary (derived prose),
+//   lastTouchedTurn, archived (bool), updatesSincePromotion
+async function updateSessionThreads(chat, options = {}) {
   if (!chat || !state.apiKey) return;
   if (!chat.messages || chat.messages.length < 2) return;
+  normalizeChatThreadTracking(chat);
 
-  // Cadence: only run every N turns where N = window size.
   const windowSize = state.contextMessages || 8;
   const turnCount = chat.messages.length;
-  if (chat.lastThreadUpdateAt !== undefined && (turnCount - chat.lastThreadUpdateAt) < windowSize) {
+  const indexMap = getMessageIndexMap(chat);
+
+  let reconcileStartIndex = Number.isInteger(chat.reconcileFromMessageIndex)
+    ? chat.reconcileFromMessageIndex
+    : indexMap.get(chat.reconcileFromMessageId);
+  const isReconcile = Number.isInteger(reconcileStartIndex);
+
+  if (!isReconcile && !options.force && chat.lastThreadUpdateAt !== undefined
+      && (turnCount - chat.lastThreadUpdateAt) < windowSize) {
     return;
   }
-  chat.lastThreadUpdateAt = turnCount;
 
-  // Look at the most recent batch of messages — exactly the window size, so we
-  // capture the messages about to fall out of context.
-  const recentMessages = chat.messages.slice(-windowSize);
+  const newStartIndex = isReconcile
+    ? Math.max(0, Math.min(reconcileStartIndex, turnCount))
+    : Math.max(0, Math.min(chat.lastThreadUpdateAt ?? 0, turnCount));
+  if (newStartIndex >= turnCount) {
+    clearThreadReconcileState(chat);
+    chat.lastThreadUpdateAt = turnCount;
+    return;
+  }
+
+  // One previous updater batch is shown only to help the model recognize a
+  // boundary that became obvious after later messages. It must not summarize
+  // that context again unless it requests a tracked rebuild from that point.
+  const boundaryStartIndex = isReconcile ? newStartIndex : Math.max(0, newStartIndex - windowSize);
+  const boundaryMessages = chat.messages.slice(boundaryStartIndex, newStartIndex);
+  const newMessages = chat.messages.slice(newStartIndex);
   const userName = state.userLabel || 'the user';
-  const aiName = state.aiLabel || 'Kai';
+  const aiName = state.aiLabel || 'the AI';
 
-  const transcript = recentMessages.map(m => {
+  const formatTranscript = (messages) => messages.map(m => {
     const role = m.role === 'user' ? userName : aiName;
-    const text = typeof m.content === 'string'
-      ? m.content
-      : (Array.isArray(m.content) ? (m.content.filter(b => b.type === 'text').map(b => b.text).join('\n') || '[image]') : '[message]');
-    return `${role}: ${text}`;
+    return `[${m.id}] ${role}: ${getMessageText(m) || '[image]'}`;
   }).join('\n\n');
 
-  // Show the updater ALL threads, not just active ones. Archived threads are not
-  // injected into the main chat prompt, but the maintenance call needs to know
-  // they exist so it can reactivate or merge instead of spawning duplicates.
+  const boundaryTranscript = formatTranscript(boundaryMessages) || '(none)';
+  const newTranscript = formatTranscript(newMessages);
+
+  // The append target is the thread whose tracked summary reaches latest in
+  // the conversation. Keyword reactivation may bump lastTouchedTurn on an old
+  // thread, but that must not turn it into the chronological current thread.
+  const currentThread = [...(chat.threads || [])]
+    .sort((a, b) => {
+      const latestIndex = (thread) => Math.max(-1, ...(thread.summaryEntries || []).map(entry => {
+        const range = getSummaryEntryIndexes(entry, indexMap);
+        return range ? range.end : -1;
+      }));
+      return latestIndex(b) - latestIndex(a)
+        || (b.lastTouchedTurn || 0) - (a.lastTouchedTurn || 0);
+    })[0] || null;
+
   const allExistingThreads = (chat.threads || []).map(t => ({
     id: t.id,
     name: t.name,
@@ -3627,43 +3913,54 @@ async function updateSessionThreads(chat) {
     archived: !!t.archived,
     summary: t.summary || '',
     keywords: Array.isArray(t.keywords) ? t.keywords : [],
-    needsReconcile: !!t.needsReconcile
+    lastSummaryEntry: (t.summaryEntries || []).length
+      ? {
+          fromMessageId: t.summaryEntries[t.summaryEntries.length - 1].fromMessageId,
+          toMessageId: t.summaryEntries[t.summaryEntries.length - 1].toMessageId
+        }
+      : null
   }));
 
-  const prompt = `You track conversation threads between ${userName} and ${aiName} by concrete subject.
+  const prompt = `You track conversation threads between ${userName} and ${aiName}.
+
+CURRENT THREAD ID (may be null):
+${JSON.stringify(currentThread?.id || null)}
 
 EXISTING THREADS, INCLUDING ARCHIVED THREADS (may be empty):
 ${JSON.stringify(allExistingThreads, null, 2)}
 
-RECENT CONVERSATION:
-${transcript}
+BOUNDARY CONTEXT — already summarized; use only to check whether a new activity actually began here:
+${boundaryTranscript}
 
-A thread represents one continuing concrete subject.
+NEW MESSAGES — assign and summarize these messages:
+${newTranscript}
 
-Do not treat emotional tone, mood, conversational function, or response style as the subject of a thread.
+A thread represents one continuous shared situation or activity, not one topic.
 
-On each update, identify the concrete subject of the recent conversation.
+Keep appending to the current thread while the messages remain part of what the participants are currently doing together, even if the topic or the steps within that activity change.
 
-If the concrete subject matches an existing active thread, update that thread.
+Look for the point where the current situation or activity was finished or set aside and the participants began doing something else. When you find that point, create a new thread beginning with the new situation or activity. Do not add those messages to the previous thread.
 
-If the concrete subject has changed, compare the new subject against all existing threads, including archived threads.
+The boundary may become clear only after later messages. If the new situation began inside BOUNDARY CONTEXT, set "rebuildFromMessageId" to the first message of that new situation so the code can remove the affected summary chunk and rebuild it. Otherwise return null.
 
-If the new subject semantically matches an existing thread, update that existing thread and reactivate it if archived.
+Thread names must describe the shared situation or activity.
 
-If the new subject does not semantically match any existing thread, create a new thread.
+Do not close threads or change an existing thread's archived value. New threads use archived:false. Existing threads that receive no NEW MESSAGES may be omitted; the code will preserve them unchanged.
 
-Continue a thread while the concrete subject remains the same.
+Write a summary for each thread in its "summary" field.
 
-Thread names must name the concrete subject.
+Summarize what happened in the NEW MESSAGES belonging to that thread, including the key details needed to continue the situation or refer back to it later. Include important actions, instructions, decisions, plans, progress, and relevant emotional meaning. Keep the summary concise and omit repetition or incidental details.
 
-Do not close existing threads. Unchanged threads should be returned unchanged with their archived value preserved.
+For an existing thread, return only the new information to append. Do not repeat or rewrite its existing summary.
 
-If a thread is marked needsReconcile:true, its summary may be out of date because the conversation was edited. Revise it only as needed using the recent conversation.
+For a new thread, write its first summary from the messages beginning at the point where the new situation or activity starts.
 
-For each thread, provide an array of 3-5 lowercase words or short phrases (1-2 words) that name the specific subjects, objects, and proper nouns in this thread for retrieval. Choose words someone would type when searching for this thread specifically. Not emotional descriptors. Not "kai" or "monica".
+Set "fromMessageId" and "toMessageId" to the first and last NEW MESSAGE included in that summary. Use the exact message IDs shown above.
 
-Return ONLY a JSON object with a "threads" array, no preamble, no markdown:
-{"threads": [{"id": "preserve existing IDs whenever possible", "name": "short concrete subject name", "kind": "thread kind if known", "archived": false, "summary": "take the thread's existing summary and add the new events from the recent conversation to the end of it — what was said and what happened, any decisions or plans if there were any, and the emotional texture (what a moment meant, the care or tension or playfulness underneath it) if there was any. Preserve everything already in the summary; do not rewrite or condense it. If there is no existing summary, this is the first entry.", "keywords": ["keyword", "phrase"]}]}`;
+For each returned thread, provide 3-5 lowercase words or short phrases (1-2 words) that name the specific subjects, objects, and proper nouns in that thread for retrieval. Choose words someone would type when searching for that thread specifically. Not emotional descriptors. Do not use ${JSON.stringify(userName.toLowerCase())} or ${JSON.stringify(aiName.toLowerCase())} as keywords.
+
+Return ONLY a JSON object, no preamble and no markdown:
+{"rebuildFromMessageId": null, "threads": [{"id": "preserve an existing ID when appending; create a new ID only for a new thread", "name": "short shared situation or activity name", "kind": "thread kind if known", "archived": false, "summary": "new summary entry only", "fromMessageId": "first included message ID", "toMessageId": "last included message ID", "keywords": ["keyword", "phrase"]}]}`;
 
   let parsed = null;
   for (let attempt = 1; attempt <= 2; attempt++) {
@@ -3707,61 +4004,129 @@ Return ONLY a JSON object with a "threads" array, no preamble, no markdown:
     }
   }
   if (!parsed) return;
-  // Accept both {threads: [...]} and bare array
+
+  const requestedRebuildId = typeof parsed.rebuildFromMessageId === 'string'
+    ? parsed.rebuildFromMessageId
+    : null;
+  if (requestedRebuildId && !isReconcile && !options.rebuildPass) {
+    const requestedIndex = indexMap.get(requestedRebuildId);
+    if (Number.isInteger(requestedIndex) && requestedIndex < newStartIndex) {
+      prepareThreadRebuildFromMessage(chat, requestedRebuildId);
+      return updateSessionThreads(chat, { force: true, rebuildPass: true });
+    }
+  }
+
   let threadArray;
   if (Array.isArray(parsed)) threadArray = parsed;
   else if (parsed && Array.isArray(parsed.threads)) threadArray = parsed.threads;
   else return;
 
+  const allowedMessageIds = new Set(newMessages.map(m => m.id));
   const oldThreadsById = {};
   for (const t of (chat.threads || [])) oldThreadsById[t.id] = t;
 
   const touchedIds = new Set();
-  const updatedThreads = threadArray
-    .filter(t => t && typeof t === 'object' && t.name && t.summary)
-    .map(t => {
-      const id = t.id || ('thread_' + Math.random().toString(36).slice(2, 8));
-      touchedIds.add(id);
-      const prev = oldThreadsById[id];
-      const newSummary = String(t.summary).trim();
-      const summaryChanged = summariesDiffer(prev?.summary, newSummary);
-      const archived = typeof t.archived === 'boolean' ? t.archived : !!prev?.archived;
-      const kind = t.kind || prev?.kind || inferThreadKind(t);
-      return {
-        ...(prev || {}),
-        id,
-        name: String(t.name).slice(0, 80),
-        kind,
-        summary: newSummary,
-        keywords: Array.isArray(t.keywords)
-          ? t.keywords.map(k => String(k).toLowerCase().slice(0, 40)).slice(0, 8)
-          : (prev?.keywords || []),
-        lastTouchedTurn: summaryChanged && !archived ? turnCount : (prev?.lastTouchedTurn ?? turnCount),
-        archived,
-        needsReconcile: false,
-        updatesSincePromotion: summaryChanged
-          ? ((prev?.updatesSincePromotion ?? 0) + 1)
-          : (prev?.updatesSincePromotion ?? 0)
-      };
-    });
+  const updatedThreads = [];
 
-  // If the model omitted an old thread, preserve it rather than deleting history.
-  const omittedThreads = (chat.threads || []).filter(t => !touchedIds.has(t.id));
+  for (const t of threadArray) {
+    if (!t || typeof t !== 'object') continue;
+    const requestedId = t.id && oldThreadsById[t.id] ? t.id : null;
+    const id = requestedId || makeStableId('thread');
+    const prev = oldThreadsById[id];
+    let entryText = String(t.summary ?? t.summaryEntry?.text ?? '').trim();
+
+    // Some stronger models may still return the complete summary. Strip the
+    // unchanged prefix so the code stores only the new append-only entry.
+    if (prev?.summary && entryText.startsWith(prev.summary)) {
+      entryText = entryText.slice(prev.summary.length).trim();
+    }
+
+    const fromMessageId = t.fromMessageId || t.summaryEntry?.fromMessageId;
+    const toMessageId = t.toMessageId || t.summaryEntry?.toMessageId;
+    const hasValidRange = allowedMessageIds.has(fromMessageId) && allowedMessageIds.has(toMessageId);
+
+    if (!prev && (!entryText || !hasValidRange)) continue;
+
+    const thread = prev
+      ? { ...prev, summaryEntries: [...(prev.summaryEntries || [])] }
+      : {
+          id,
+          name: String(t.name || 'New activity').slice(0, 80),
+          kind: t.kind || inferThreadKind(t),
+          archived: false,
+          summaryEntries: [],
+          keywords: [],
+          lastTouchedTurn: turnCount,
+          needsReconcile: false,
+          updatesSincePromotion: 0
+        };
+
+    let summaryChanged = false;
+    if (entryText && hasValidRange) {
+      const duplicate = thread.summaryEntries.some(entry =>
+        entry.fromMessageId === fromMessageId
+        && entry.toMessageId === toMessageId
+        && String(entry.text || '').trim() === entryText
+      );
+      if (!duplicate) {
+        thread.summaryEntries.push({
+          id: makeStableId('sum'),
+          fromMessageId,
+          toMessageId,
+          text: entryText
+        });
+        summaryChanged = true;
+      }
+    }
+
+    thread.name = String(t.name || thread.name || 'Thread').slice(0, 80);
+    thread.kind = t.kind || thread.kind || inferThreadKind(thread);
+    thread.archived = prev ? !!prev.archived : false;
+    thread.keywords = Array.isArray(t.keywords)
+      ? t.keywords.map(k => String(k).toLowerCase().slice(0, 40)).filter(Boolean).slice(0, 8)
+      : (thread.keywords || []);
+    thread.lastTouchedTurn = summaryChanged ? turnCount : (thread.lastTouchedTurn ?? turnCount);
+    thread.needsReconcile = false;
+    thread.updatesSincePromotion = summaryChanged
+      ? ((thread.updatesSincePromotion ?? 0) + 1)
+      : (thread.updatesSincePromotion ?? 0);
+    syncThreadSummary(thread);
+
+    if (summaryChanged) touchedIds.add(id);
+    updatedThreads.push(thread);
+  }
+
+  // Every processed batch must produce at least one valid tracked summary
+  // entry. If a weaker model returns malformed IDs or no usable summary, leave
+  // cadence/reconciliation untouched so the next updater call can retry.
+  if (touchedIds.size === 0) {
+    console.warn('Thread updater returned no valid summary entries; batch left pending.');
+    return;
+  }
+
+  // Preserve every existing thread the updater did not return.
+  const returnedIds = new Set(updatedThreads.map(t => t.id));
+  const omittedThreads = (chat.threads || []).filter(t => !returnedIds.has(t.id));
   let mergedThreads = mergeDuplicateSessionThreads([...updatedThreads, ...omittedThreads], turnCount);
 
-  // SEMANTIC REACTIVATION PASS: still useful between cadence windows and for
-  // oblique references. Now it runs against the deduped full list.
+  // Semantic reactivation remains a separate lifecycle pass.
   const stillArchived = mergedThreads.filter(t => t.archived);
   if (stillArchived.length > 0) {
     try {
-      const archivedList = stillArchived.map(t => ({ id: t.id, name: t.name, kind: t.kind || inferThreadKind(t), summary: (t.summary || '').slice(0, 450), keywords: t.keywords || [] }));
+      const archivedList = stillArchived.map(t => ({
+        id: t.id,
+        name: t.name,
+        kind: t.kind || inferThreadKind(t),
+        summary: (t.summary || '').slice(0, 450),
+        keywords: t.keywords || []
+      }));
       const semanticPrompt = `You are checking whether a recent conversation has brought any archived topics back up. Archived topics are previous threads that fell quiet but might be referenced again — sometimes by name, sometimes obliquely ("the recipe from earlier", "should I call her again?", "back to what we were doing").
 
 ARCHIVED THREADS:
 ${JSON.stringify(archivedList, null, 2)}
 
 RECENT CONVERSATION:
-${transcript}
+${newTranscript}
 
 Return ONLY a JSON object listing the IDs of any archived threads that were brought up directly or obliquely. If none, return an empty array.
 
@@ -3788,7 +4153,9 @@ Return ONLY a JSON object listing the IDs of any archived threads that were brou
         let semRaw = (semData.choices?.[0]?.message?.content || '').trim();
         semRaw = semRaw.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
         const semParsed = JSON.parse(semRaw);
-        const ids = Array.isArray(semParsed?.reactivate) ? semParsed.reactivate : (Array.isArray(semParsed) ? semParsed : []);
+        const ids = Array.isArray(semParsed?.reactivate)
+          ? semParsed.reactivate
+          : (Array.isArray(semParsed) ? semParsed : []);
         for (const t of mergedThreads) {
           if (ids.includes(t.id)) {
             t.archived = false;
@@ -3801,15 +4168,17 @@ Return ONLY a JSON object listing the IDs of any archived threads that were brou
     }
   }
 
-  // Final cleanup after possible semantic wakeups.
   mergedThreads = mergeDuplicateSessionThreads(mergedThreads, turnCount);
+  for (const thread of mergedThreads) syncThreadSummary(thread);
   chat.threads = mergedThreads;
+  chat.lastThreadUpdateAt = turnCount;
+  clearThreadReconcileState(chat);
+  chat.updatedAt = Date.now();
   saveState();
   updateInfoBar([], null, chat.threads);
 
-  // Fire portability checks asynchronously for active touched/changed threads only.
-  const activeTouchedIds = new Set(updatedThreads.filter(t => !t.archived).map(t => t.id));
-  const promotionCandidates = chat.threads.filter(t => !t.archived && activeTouchedIds.has(t.id));
+  // Memory promotion remains unchanged and consumes the derived readable summary.
+  const promotionCandidates = chat.threads.filter(t => !t.archived && touchedIds.has(t.id));
   for (const t of promotionCandidates) {
     promoteThreadIfPortable(t, chat).catch(e => console.warn('Promotion check failed:', e));
   }
@@ -4846,6 +5215,7 @@ function importAll(event) {
         if (d[k] !== undefined) state[k] = d[k];
       });
       ensureVoiceState();
+      normalizeAllThreadTrackingState();
       if (d.params) state.params = { ...state.params, ...d.params };
       if (d.chats?.length) state.activeChatId = d.chats[d.chats.length - 1].id;
       saveState();
