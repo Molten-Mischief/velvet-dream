@@ -577,11 +577,31 @@ html, body {
 .memory-card-toggle { display: flex; align-items: center; gap: 6px; }
 .memory-card-toggle input[type="checkbox"] { width: 14px; height: 14px; accent-color: var(--accent); cursor: pointer; }
 .memory-card-toggle label { font-size: 11px; color: var(--text-muted); cursor: pointer; margin-bottom: 0; text-transform: none; letter-spacing: 0; font-family: 'DM Sans', sans-serif; }
+.cache-mode-card {
+  background: var(--accent-subtle); border: 1px solid var(--accent-dim);
+  border-radius: var(--radius-sm); padding: 12px;
+}
+.cache-mode-card .memory-card-toggle label { color: var(--text-primary); font-size: 13px; font-weight: 600; }
+.cache-mode-card .hint { margin-top: 8px; }
+.cache-mode-status { margin-top: 8px; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--accent); line-height: 1.45; }
+.cache-mode-disabled { opacity: 0.45; }
 .save-btn { width: 100%; padding: 12px; background: var(--accent); color: var(--bg-primary); border: none; border-radius: var(--radius-sm); font-family: 'DM Sans', sans-serif; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.2s; margin-top: 8px; }
 .save-btn:hover { opacity: 0.85; }
 .action-row { display: flex; gap: 8px; margin-top: 12px; }
 .action-btn { flex: 1; padding: 10px; background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); color: var(--text-secondary); font-size: 12px; cursor: pointer; font-family: 'DM Sans', sans-serif; text-align: center; transition: all 0.15s; }
 .action-btn:hover { background: var(--bg-hover); color: var(--text-primary); border-color: var(--accent-dim); }
+.message-info-summary {
+  padding: 12px 14px; border-radius: var(--radius-sm); margin-bottom: 14px;
+  background: var(--accent-glow); border: 1px solid var(--accent-dim);
+}
+.message-info-status { font-size: 12px; font-weight: 700; color: var(--accent); letter-spacing: 0.05em; text-transform: uppercase; }
+.message-info-note { margin-top: 5px; font-size: 11px; line-height: 1.45; color: var(--text-muted); }
+.message-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.message-info-cell { background: var(--bg-tertiary); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 10px 12px; }
+.message-info-label { font-size: 9px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
+.message-info-value { font-family: 'JetBrains Mono', monospace; font-size: 13px; color: var(--text-primary); word-break: break-word; }
+.message-info-wide { grid-column: 1 / -1; }
+@media (max-width: 420px) { .message-info-grid { grid-template-columns: 1fr; } .message-info-wide { grid-column: auto; } }
 .toast { position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%) translateY(20px); background: var(--danger); color: white; padding: 10px 20px; border-radius: var(--radius-sm); font-size: 13px; z-index: 300; opacity: 0; transition: all 0.3s; pointer-events: none; max-width: 90%; text-align: center; }
 .toast.visible { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
 
@@ -643,7 +663,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v37A</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v37B</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -923,7 +943,15 @@ html, body {
       <div class="section-divider" onclick="toggleSection('memRetrievalSection',this)"><span class="toggle-arrow collapsed">▼</span> Memory Retrieval</div>
       <div class="collapsible-section collapsed" id="memRetrievalSection">
         <div style="padding-top:12px">
-          <div class="form-group"><label>Context Messages</label><div class="slider-row"><input type="range" id="contextSlider" min="2" max="60" step="2" value="10"><span class="slider-val" id="contextVal">10</span></div></div>
+          <div class="form-group cache-mode-card">
+            <div class="memory-card-toggle">
+              <input type="checkbox" id="cacheConversationMode" onchange="applyCacheConversationModeFromUI()">
+              <label for="cacheConversationMode">Cache Conversation Mode</label>
+            </div>
+            <div class="hint">Provider-neutral prompt order: stable CI → full visible conversation → current temporary memories inside the newest user turn. While enabled, thread injection, activation, updating, and promotion are dormant.</div>
+            <div class="cache-mode-status" id="cacheConversationModeStatus"></div>
+          </div>
+          <div class="form-group" id="contextMessagesGroup"><label>Context Messages</label><div class="slider-row"><input type="range" id="contextSlider" min="2" max="60" step="2" value="10"><span class="slider-val" id="contextVal">10</span></div><div class="hint">Used only when Cache Conversation Mode is off.</div></div>
           <div class="form-group"><label>Max Memories Per Message</label><div class="slider-row"><input type="range" id="maxMemSlider" min="1" max="10" step="1" value="3"><span class="slider-val" id="maxMemVal">3</span></div></div>
           <div class="form-group"><label>Semantic Match Threshold</label><div class="slider-row"><input type="range" id="thresholdSlider" min="0.2" max="0.8" step="0.05" value="0.4"><span class="slider-val" id="thresholdVal">0.40</span></div></div>
         </div>
@@ -1071,6 +1099,17 @@ html, body {
         <button class="action-btn" id="threadDetailDelete" style="border-color:var(--danger);color:var(--danger);width:100%">Close this thread</button>
       </div>
     </div>
+  </div>
+</div>
+
+<!-- MESSAGE / API TURN INFO -->
+<div class="modal-overlay" id="messageInfoModal">
+  <div class="modal" style="max-width:440px">
+    <div class="modal-header">
+      <h3>Message Info</h3>
+      <button class="modal-close" onclick="closeMessageInfo()">×</button>
+    </div>
+    <div class="modal-body" id="messageInfoBody"></div>
   </div>
 </div>
 
@@ -1401,7 +1440,7 @@ const PRIORITY_ORDER = { high: 0, medium: 1, low: 2 };
 // ===== STATE =====
 let state = {
   apiKey: '', systemPrompt: '', userLabel: 'You', aiLabel: 'Kai',
-  contextMessages: 10, maxMemories: 3,
+  cacheConversationMode: true, contextMessages: 10, maxMemories: 3,
   params: { temperature: 0.85, top_p: 0.90, top_k: 0, frequency_penalty: 0, presence_penalty: 0, repetition_penalty: 1.15, min_p: 0.05, max_tokens: 0 },
   voiceName: 'nova', voiceSpeed: 1.0, openaiKey: '',
   voice: {
@@ -2773,6 +2812,7 @@ function getThreadMatchTerms(thread) {
 }
 
 function fastThreadMaintenance(chat) {
+  if (isCacheConversationMode()) return;
   if (!chat || !chat.threads || !chat.threads.length) return;
   const windowSize = state.contextMessages || 8;
   const archiveAfter = Math.max(1, Math.floor(windowSize / 2));
@@ -2813,6 +2853,60 @@ function fastThreadMaintenance(chat) {
   }
 }
 
+// ===== PROVIDER-NEUTRAL CACHE ARCHITECTURE =====
+// Velvet Dream owns one stable conversation cache identity. Provider adapters
+// map it to provider-specific request fields. OpenRouter uses session_id.
+function isCacheConversationMode() {
+  return state.cacheConversationMode === true;
+}
+
+function getConversationCacheId(chat) {
+  return chat?.id || '';
+}
+
+function buildOpenRouterChatPayload(chat, messages) {
+  const payload = {
+    model: chat.model,
+    messages,
+    stream: true,
+    ...buildApiParams()
+  };
+  const cacheId = getConversationCacheId(chat);
+  if (cacheId) payload.session_id = cacheId;
+  return payload;
+}
+
+function formatMemoryTail(mems) {
+  if (!mems || !mems.length) return '';
+  const block = mems.map(m => `## ${m.name} (${memoryAgeLabel(m)})\n${m.content}`).join('\n\n---\n\n');
+  const framing = `These are notes from past conversations between ${state.userLabel || 'the user'} and ${state.aiLabel || 'Kai'} that may be relevant to the current message.`;
+  return `[RELEVANT MEMORIES]\n\n${framing}\n\n${block}`;
+}
+
+// The tail is added to a copy of the newest user turn, never to stored chat data.
+// This keeps the portable order CI → full conversation → current memory tail.
+function appendMemoryTailToCurrentUserTurn(messages, memoryTail) {
+  if (!memoryTail) return messages;
+  const idx = [...messages].map(m => m.role).lastIndexOf('user');
+  if (idx < 0) {
+    messages.push({ role: 'user', content: memoryTail });
+    return messages;
+  }
+
+  const original = messages[idx];
+  if (typeof original.content === 'string') {
+    messages[idx] = { ...original, content: `${original.content}\n\n${memoryTail}` };
+  } else if (Array.isArray(original.content)) {
+    messages[idx] = {
+      ...original,
+      content: [...original.content, { type: 'text', text: `\n\n${memoryTail}` }]
+    };
+  } else {
+    messages[idx] = { ...original, content: memoryTail };
+  }
+  return messages;
+}
+
 // ===== BUILD API MESSAGES =====
 async function buildApiMessages(chat, userContent) {
   const messages = [];
@@ -2821,16 +2915,27 @@ async function buildApiMessages(chat, userContent) {
     : 'You are a helpful assistant.';
   messages.push({ role: 'system', content: sysContent });
 
-  // FAST THREAD MAINTENANCE: active threads bump touch-counter if their
-  // keywords appear in the last 2 messages; otherwise age out after 4 silent
-  // turns. Archived threads reactivate via reactivateThreadsByWordMatch
-  // (current message) and the semantic pass in updateSessionThreads.
+  const cacheMode = isCacheConversationMode();
+  const userText = typeof userContent === 'string'
+    ? userContent
+    : (userContent.find(c => c.type === 'text')?.text || '');
+
+  if (cacheMode) {
+    // Canonical cache order: stable CI, complete visible conversation, then
+    // current ephemeral memories at the end of the newest user turn.
+    chat.messages.forEach(m => messages.push({ role: m.role, content: m.content }));
+
+    const mems = await getRelevantMemories(userText);
+    appendMemoryTailToCurrentUserTurn(messages, formatMemoryTail(mems));
+
+    const totalText = messages.map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join(' ');
+    updateInfoBar(mems, estimateTokens(totalText), []);
+    return messages;
+  }
+
+  // Original v37A rolling-context/thread path, unchanged when cache mode is off.
   fastThreadMaintenance(chat);
 
-  // Session state: inject active threads so the model knows what's currently in flight.
-  // Threads are inferred and updated in the background — see updateSessionThreads().
-  // Archived threads are not injected (token savings) but reactivate if their topic
-  // returns in conversation.
   if (chat.threads && chat.threads.length) {
     const activeThreads = chat.threads.filter(t => !t.archived);
     if (activeThreads.length) {
@@ -2844,7 +2949,6 @@ async function buildApiMessages(chat, userContent) {
     }
   }
 
-  const userText = typeof userContent === 'string' ? userContent : (userContent.find(c => c.type === 'text')?.text || '');
   const mems = await getRelevantMemories(userText);
   updateInfoBar(mems, null, chat.threads);
   if (mems.length > 0) {
@@ -2986,7 +3090,7 @@ async function sendMessage() {
     // message before we build the prompt, so any archived thread whose name
     // is mentioned gets its summary into context this turn. The slow half
     // (semantic scan) runs inside updateSessionThreads below for oblique cases.
-    reactivateThreadsByWordMatch(chat, text);
+    if (!isCacheConversationMode()) reactivateThreadsByWordMatch(chat, text);
 
     const apiMsgs = await buildApiMessages(chat, userContent);
 
@@ -2998,7 +3102,7 @@ async function sendMessage() {
         'HTTP-Referer': 'https://kai.app',
         'X-Title': 'Kai'
       },
-      body: JSON.stringify({ model: chat.model, messages: apiMsgs, stream: true, ...buildApiParams() }),
+      body: JSON.stringify(buildOpenRouterChatPayload(chat, apiMsgs)),
       signal: abortController.signal
     });
 
@@ -3021,6 +3125,8 @@ async function sendMessage() {
     let visible = '';     // what's currently shown on screen
     let pending = '';     // buffer waiting to be revealed
     let realModel = '';
+    let generationUsage = null;
+    let generationId = '';
     let dotsRemoved = false;
 
     // Smoothing ticker: drains `pending` into `visible` at a steady pace.
@@ -3057,27 +3163,33 @@ async function sendMessage() {
 
     startTicker();
 
+    const processStreamLine = (line) => {
+      if (!line.startsWith('data:')) return;
+      const d = line.slice(5).trim();
+      if (!d || d === '[DONE]') return;
+      try {
+        const parsed = JSON.parse(d);
+        if (parsed.model && !realModel) realModel = parsed.model;
+        if (parsed.id && !generationId) generationId = parsed.id;
+        if (parsed.usage) generationUsage = parsed.usage;
+        const delta = parsed.choices?.[0]?.delta?.content;
+        if (delta) {
+          full += delta;
+          pending += delta;
+        }
+      } catch (e) { /* skip malformed or non-JSON stream lines */ }
+    };
+
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
       buf += dec.decode(value, { stream: true });
       const lines = buf.split('\n');
       buf = lines.pop() || '';
-      for (const line of lines) {
-        if (!line.startsWith('data: ')) continue;
-        const d = line.slice(6).trim();
-        if (d === '[DONE]') continue;
-        try {
-          const parsed = JSON.parse(d);
-          if (parsed.model && !realModel) realModel = parsed.model;
-          const delta = parsed.choices?.[0]?.delta?.content;
-          if (delta) {
-            full += delta;
-            pending += delta;
-          }
-        } catch (e) { /* skip parse errors */ }
-      }
+      for (const line of lines) processStreamLine(line);
     }
+    // Preserve a final usage-only event even when the stream has no trailing newline.
+    if (buf.trim()) processStreamLine(buf.trim());
 
     // Network done. Drain the rest of the buffer fast so the user isn't
     // staring at a slow trickle after the model has finished.
@@ -3102,7 +3214,13 @@ async function sendMessage() {
       msgEl.style.display = '';
     }
 
-    chat.messages.push(createMessage('assistant', full, { model: realModel || chat.model }));
+    const assistantExtra = {
+      model: realModel || chat.model,
+      requestArchitecture: isCacheConversationMode() ? 'conversation-prefix-v1' : 'rolling-threads-v37a'
+    };
+    if (generationUsage) assistantExtra.usage = generationUsage;
+    if (generationId) assistantExtra.generationId = generationId;
+    chat.messages.push(createMessage('assistant', full, assistantExtra));
     chat.updatedAt = Date.now();
     saveState();
     renderChatList();
@@ -3110,7 +3228,9 @@ async function sendMessage() {
 
     // Background tasks after a turn — both fire-and-forget, don't block UI
     maybeAutoCapture(chat).catch(e => console.warn('Auto-capture error:', e));
-    updateSessionThreads(chat).catch(e => console.warn('Thread update error:', e));
+    if (!isCacheConversationMode()) {
+      updateSessionThreads(chat).catch(e => console.warn('Thread update error:', e));
+    }
 
   } catch (err) {
     document.getElementById('typing')?.remove();
@@ -3137,7 +3257,7 @@ function stopStreaming() {
 function renderMessages() {
   const area = document.getElementById('chatArea');
   const chat = getActiveChat();
-  updateInfoBar([], null, chat?.threads);
+  updateInfoBar([], null, isCacheConversationMode() ? [] : chat?.threads);
 
   if (!chat || !chat.messages.length) {
     const sync = currentUser ? '<div class="sync-status online">☁ Synced</div>' : (isOfflineMode ? '<div class="sync-status offline">Offline</div>' : '');
@@ -3196,12 +3316,16 @@ function createMessageEl(role, content, msgData, idx) {
     });
   }
 
-  // Icon buttons. Order: Copy, Capture, then Listen (assistant) or Edit (user).
+  // Icon buttons. Assistant: Copy, Info, Capture, Listen. User: Copy, Capture, Edit.
   const ICON_COPY = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+  const ICON_INFO = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="12" y1="11" x2="12" y2="17"/><line x1="12" y1="7" x2="12.01" y2="7"/></svg>';
   const ICON_CAPTURE = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>';
   const ICON_LISTEN = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a9 9 0 0 1 0 14"/></svg>';
   const ICON_EDIT = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>';
   let actions = `<div class="message-actions"><button class="msg-action-btn" title="Copy" onclick="copyMessage(this,${idx})">${ICON_COPY}</button>`;
+  if (role === 'assistant') {
+    actions += `<button class="msg-action-btn" title="Message info" onclick="openMessageInfo(${idx})">${ICON_INFO}</button>`;
+  }
   actions += `<button class="msg-action-btn" title="Capture" onclick="captureMemoryFromMessage(${idx},this)">${ICON_CAPTURE}</button>`;
   if (role === 'assistant') {
     actions += `<button class="msg-action-btn" title="Listen" data-icon-listen onclick="readAloud(this,${idx})">${ICON_LISTEN}</button>`;
@@ -3213,6 +3337,82 @@ function createMessageEl(role, content, msgData, idx) {
 
   div.innerHTML = `<div class="message-label">${escapeHtml(label)}</div><div class="message-bubble">${bc}</div>${actions}`;
   return div;
+}
+
+
+function openMessageInfo(idx) {
+  const chat = getActiveChat();
+  if (!chat) return;
+  const msg = chat.messages[idx];
+  if (!msg || msg.role !== 'assistant') return;
+
+  const body = document.getElementById('messageInfoBody');
+  const usage = msg.usage;
+  if (!usage) {
+    body.innerHTML = `
+      <div class="message-info-summary">
+        <div class="message-info-status">No usage record</div>
+        <div class="message-info-note">This reply predates per-message API capture, or its provider did not return usage data.</div>
+      </div>
+      <div class="message-info-grid">
+        <div class="message-info-cell message-info-wide"><div class="message-info-label">Model</div><div class="message-info-value">${escapeHtml(msg.model || 'Not recorded')}</div></div>
+        <div class="message-info-cell message-info-wide"><div class="message-info-label">Request architecture</div><div class="message-info-value">${escapeHtml(msg.requestArchitecture || 'Not recorded')}</div></div>
+      </div>`;
+    document.getElementById('messageInfoModal').classList.add('open');
+    return;
+  }
+
+  const promptTokens = Number(usage.prompt_tokens);
+  const completionTokens = Number(usage.completion_tokens);
+  const totalTokens = Number(usage.total_tokens);
+  const details = usage.prompt_tokens_details || {};
+  const cachedTokens = Number(details.cached_tokens);
+  const cacheWriteRaw = details.cache_write_tokens;
+  const cacheWriteTokens = cacheWriteRaw === undefined || cacheWriteRaw === null ? null : Number(cacheWriteRaw);
+  const safePrompt = Number.isFinite(promptTokens) ? promptTokens : 0;
+  const safeCached = Number.isFinite(cachedTokens) ? cachedTokens : 0;
+  const freshTokens = Math.max(0, safePrompt - safeCached);
+  const cachePercent = safePrompt > 0 ? (safeCached / safePrompt) * 100 : 0;
+  const cost = Number(usage.cost);
+
+  let status = 'No cache read reported';
+  let note = 'OpenRouter reported zero cached input tokens for this turn.';
+  if (safeCached > 0) {
+    status = 'Cache hit';
+    note = `${cachePercent.toFixed(1)}% of this turn’s input tokens were read from cache.`;
+  } else if (Number.isFinite(cacheWriteTokens) && cacheWriteTokens > 0) {
+    status = 'Cache warmed';
+    note = 'This turn wrote cacheable input, but did not read cached tokens yet.';
+  }
+
+  const numberText = value => Number.isFinite(value) ? Math.round(value).toLocaleString() : 'Not reported';
+  const costText = Number.isFinite(cost)
+    ? (cost === 0 ? '$0' : `$${cost.toFixed(cost < 0.01 ? 6 : 4)}`)
+    : 'Not reported';
+  const writeText = cacheWriteTokens === null ? 'Not reported' : numberText(cacheWriteTokens);
+
+  body.innerHTML = `
+    <div class="message-info-summary">
+      <div class="message-info-status">${escapeHtml(status)}</div>
+      <div class="message-info-note">${escapeHtml(note)} These results belong to the request triggered by your preceding message.</div>
+    </div>
+    <div class="message-info-grid">
+      <div class="message-info-cell"><div class="message-info-label">Prompt tokens</div><div class="message-info-value">${numberText(promptTokens)}</div></div>
+      <div class="message-info-cell"><div class="message-info-label">Cached tokens</div><div class="message-info-value">${numberText(cachedTokens)}</div></div>
+      <div class="message-info-cell"><div class="message-info-label">Fresh input tokens</div><div class="message-info-value">${numberText(freshTokens)}</div></div>
+      <div class="message-info-cell"><div class="message-info-label">Cache share</div><div class="message-info-value">${safePrompt > 0 ? cachePercent.toFixed(1) + '%' : 'Not reported'}</div></div>
+      <div class="message-info-cell"><div class="message-info-label">Cache write tokens</div><div class="message-info-value">${writeText}</div></div>
+      <div class="message-info-cell"><div class="message-info-label">Completion tokens</div><div class="message-info-value">${numberText(completionTokens)}</div></div>
+      <div class="message-info-cell"><div class="message-info-label">Total tokens</div><div class="message-info-value">${numberText(totalTokens)}</div></div>
+      <div class="message-info-cell"><div class="message-info-label">Cost charged</div><div class="message-info-value">${costText}</div></div>
+      <div class="message-info-cell message-info-wide"><div class="message-info-label">Model</div><div class="message-info-value">${escapeHtml(msg.model || 'Not recorded')}</div></div>
+      <div class="message-info-cell message-info-wide"><div class="message-info-label">Request architecture</div><div class="message-info-value">${escapeHtml(msg.requestArchitecture || 'Not recorded')}</div></div>
+    </div>`;
+  document.getElementById('messageInfoModal').classList.add('open');
+}
+
+function closeMessageInfo() {
+  document.getElementById('messageInfoModal').classList.remove('open');
 }
 
 function copyMessage(btn, idx) {
@@ -3684,6 +3884,7 @@ let pendingMemoryDraft = null;
 //
 // Returns true if any thread was reactivated (caller can choose to log/render).
 function reactivateThreadsByWordMatch(chat, userText) {
+  if (isCacheConversationMode()) return false;
   if (!chat || !chat.threads || !userText) return false;
   const text = String(userText).toLowerCase();
   if (!text.trim()) return false;
@@ -3840,6 +4041,7 @@ function mergeDuplicateSessionThreads(threads, turnCount) {
 //   id, name, summaryEntries (message-linked append-only chunks), summary (derived prose),
 //   lastTouchedTurn, archived (bool), updatesSincePromotion
 async function updateSessionThreads(chat, options = {}) {
+  if (isCacheConversationMode()) return;
   if (!chat || !state.apiKey) return;
   const lockKey = chat.id || chat;
   const alreadyRunning = threadUpdateInFlight.has(lockKey);
@@ -4187,6 +4389,7 @@ Return ONLY a JSON object listing the IDs of any archived threads that were brou
 // extraction is merged with the existing card via the consolidator so we don't
 // accumulate duplicates.
 async function promoteThreadIfPortable(thread, chat) {
+  if (isCacheConversationMode()) return;
   if (!thread || !thread.summary || !thread.summary.trim()) return;
   if (!state.apiKey) return;
   const source = `Thread: ${thread.name}\n\n${thread.summary}`;
@@ -4535,7 +4738,10 @@ function openSettings() {
   document.getElementById('systemPromptInput').value = state.systemPrompt;
   document.getElementById('userLabelInput').value = state.userLabel || 'You';
   document.getElementById('aiLabelInput').value = state.aiLabel || 'Kai';
+  const cacheModeEl = document.getElementById('cacheConversationMode');
+  if (cacheModeEl) cacheModeEl.checked = isCacheConversationMode();
   setSlider('contextSlider', 'contextVal', state.contextMessages || 10, true);
+  syncCacheConversationModeUI();
   setSlider('maxMemSlider', 'maxMemVal', state.maxMemories || 3, true);
   const tEl = document.getElementById('thresholdSlider');
   if (tEl) {
@@ -4585,6 +4791,7 @@ function switchSettingsTab(tabId, btn) {
 }
 
 function saveMemorySettings() {
+  state.cacheConversationMode = !!document.getElementById('cacheConversationMode')?.checked;
   state.contextMessages = parseInt(document.getElementById('contextSlider').value) || 10;
   state.maxMemories = parseInt(document.getElementById('maxMemSlider').value) || 3;
   state.semanticThreshold = parseFloat(document.getElementById('thresholdSlider').value) || 0.4;
@@ -4618,6 +4825,32 @@ async function regenerateKeywordsAndVectors() {
   showToast(`Done — ${total} cards updated`, false);
 }
 
+
+function applyCacheConversationModeFromUI() {
+  const enabled = !!document.getElementById('cacheConversationMode')?.checked;
+  state.cacheConversationMode = enabled;
+  syncCacheConversationModeUI();
+  saveState();
+  renderMessages();
+  showToast(enabled ? 'Cache Conversation Mode on' : 'Cache Conversation Mode off', false);
+}
+
+function syncCacheConversationModeUI() {
+  const enabled = !!document.getElementById('cacheConversationMode')?.checked;
+  const slider = document.getElementById('contextSlider');
+  const value = document.getElementById('contextVal');
+  const group = document.getElementById('contextMessagesGroup');
+  const status = document.getElementById('cacheConversationModeStatus');
+  if (slider) slider.disabled = enabled;
+  if (group) group.classList.toggle('cache-mode-disabled', enabled);
+  if (value) value.textContent = enabled ? 'ALL' : Math.round(Number(slider?.value || state.contextMessages || 10));
+  if (status) {
+    status.textContent = enabled
+      ? 'ACTIVE · CI → all chat messages → current memory tail · threads dormant'
+      : `OFF · rolling ${Math.round(Number(slider?.value || state.contextMessages || 10))}-message window · threads active`;
+  }
+}
+
 function setSlider(sid, vid, val, isInt) {
   const s = document.getElementById(sid);
   const v = document.getElementById(vid);
@@ -4636,7 +4869,13 @@ document.querySelectorAll('.slider-row input[type="range"]').forEach(s => {
   s.addEventListener('input', () => {
     const v = s.parentElement.querySelector('.slider-val');
     if (!v) return;
-    if (s.id === 'contextSlider' || s.id === 'maxMemSlider') { v.textContent = Math.round(s.value); return; }
+    if (s.id === 'contextSlider') {
+      if (document.getElementById('cacheConversationMode')?.checked) v.textContent = 'ALL';
+      else v.textContent = Math.round(s.value);
+      syncCacheConversationModeUI();
+      return;
+    }
+    if (s.id === 'maxMemSlider') { v.textContent = Math.round(s.value); return; }
     if (s.id === 'paramTopK' || s.id === 'paramMaxTok') { v.textContent = Math.round(s.value); return; }
     v.textContent = parseFloat(s.value).toFixed(2);
   });
@@ -4676,6 +4915,7 @@ function saveSettings() {
   state.systemPrompt = document.getElementById('systemPromptInput').value;
   state.userLabel = document.getElementById('userLabelInput').value.trim() || 'You';
   state.aiLabel = document.getElementById('aiLabelInput').value.trim() || 'Kai';
+  state.cacheConversationMode = !!document.getElementById('cacheConversationMode')?.checked;
   state.contextMessages = parseInt(document.getElementById('contextSlider').value) || 10;
   state.maxMemories = parseInt(document.getElementById('maxMemSlider').value) || 3;
   const tEl = document.getElementById('thresholdSlider');
@@ -5128,6 +5368,7 @@ function exportAll() {
     exportDate: new Date().toISOString(), version: 2,
     apiKey: state.apiKey, systemPrompt: state.systemPrompt,
     userLabel: state.userLabel, aiLabel: state.aiLabel,
+    cacheConversationMode: state.cacheConversationMode,
     contextMessages: state.contextMessages, maxMemories: state.maxMemories,
     welcomeAvatar: state.welcomeAvatar,
     params: state.params, customModels: state.customModels,
@@ -5209,7 +5450,7 @@ function importAll(event) {
     try {
       const d = JSON.parse(e.target.result);
       if (!confirm(`Import backup from ${d.exportDate || '?'}? Replaces everything.`)) return;
-      ['apiKey', 'systemPrompt', 'userLabel', 'aiLabel', 'contextMessages', 'maxMemories', 'welcomeAvatar', 'customModels', 'voice', 'voiceName', 'voiceSpeed', 'openaiKey', 'elevenLabsKey', 'elevenLabsVoiceId', 'elevenLabsModel', 'xaiKey', 'xaiVoiceId', 'memories', 'chats'].forEach(k => {
+      ['apiKey', 'systemPrompt', 'userLabel', 'aiLabel', 'cacheConversationMode', 'contextMessages', 'maxMemories', 'welcomeAvatar', 'customModels', 'voice', 'voiceName', 'voiceSpeed', 'openaiKey', 'elevenLabsKey', 'elevenLabsVoiceId', 'elevenLabsModel', 'xaiKey', 'xaiVoiceId', 'memories', 'chats'].forEach(k => {
         if (d[k] !== undefined) state[k] = d[k];
       });
       ensureVoiceState();
@@ -5254,6 +5495,9 @@ function syncAllSliders() {
   });
   const cs = document.getElementById('contextSlider');
   if (cs) { cs.value = state.contextMessages || 10; document.getElementById('contextVal').textContent = state.contextMessages || 10; }
+  const cacheModeEl = document.getElementById('cacheConversationMode');
+  if (cacheModeEl) cacheModeEl.checked = isCacheConversationMode();
+  syncCacheConversationModeUI();
   const ms = document.getElementById('maxMemSlider');
   if (ms) { ms.value = state.maxMemories || 3; document.getElementById('maxMemVal').textContent = state.maxMemories || 3; }
 }
