@@ -663,7 +663,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v37C</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v37D</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -948,7 +948,7 @@ html, body {
               <input type="checkbox" id="cacheConversationMode" onchange="applyCacheConversationModeFromUI()">
               <label for="cacheConversationMode">Cache Conversation Mode</label>
             </div>
-            <div class="hint">Provider-neutral prompt order: stable CI → full visible conversation → current temporary memories inside the newest user turn. While enabled, thread injection, activation, updating, and promotion are dormant.</div>
+            <div class="hint">Universal cache contract: stable CI → full visible conversation → cache boundary → current temporary memories. Thread summaries stay out of the main prompt while the background thread/memory engine remains active.</div>
             <div class="cache-mode-status" id="cacheConversationModeStatus"></div>
           </div>
           <div class="form-group" id="contextMessagesGroup"><label>Context Messages</label><div class="slider-row"><input type="range" id="contextSlider" min="2" max="60" step="2" value="10"><span class="slider-val" id="contextVal">10</span></div><div class="hint">Used only when Cache Conversation Mode is off.</div></div>
@@ -2852,15 +2852,68 @@ function fastThreadMaintenance(chat) {
   }
 }
 
-// ===== PROVIDER-NEUTRAL CACHE ARCHITECTURE =====
-// Velvet Dream owns one stable conversation cache identity. Provider adapters
-// map it to provider-specific request fields. OpenRouter uses session_id.
+// ===== UNIVERSAL CACHE CONTRACT =====
+// Velvet Dream owns the architecture: CI + complete conversation is the stable
+// prefix; turn-specific retrieved memories are the volatile tail. The boundary
+// marker is OpenRouter metadata, not prose shown to the model. OpenRouter can
+// translate prompt_cache_breakpoint for providers that support explicit caching
+// and strips it for providers that do not. Provider-specific request controls
+// live only in this adapter layer.
 function isCacheConversationMode() {
   return state.cacheConversationMode === true;
 }
 
 function getConversationCacheId(chat) {
   return chat?.id || '';
+}
+
+function normalizeOpenRouterModelId(modelId) {
+  return String(modelId || '').trim().toLowerCase().replace(/^~/, '');
+}
+
+function openAIGptVersion(modelId) {
+  const model = normalizeOpenRouterModelId(modelId);
+  if (!model.startsWith('openai/')) return null;
+  const slug = model.slice('openai/'.length);
+  if (slug === 'gpt-latest') return { major: Infinity, minor: Infinity };
+  const match = slug.match(/^gpt-(\d+)(?:\.(\d+))?/);
+  if (!match) return null;
+  return { major: Number(match[1]), minor: Number(match[2] || 0) };
+}
+
+function supportsOpenAIExplicitPromptCaching(modelId) {
+  const v = openAIGptVersion(modelId);
+  if (!v) return false;
+  return v.major > 5 || (v.major === 5 && v.minor >= 6);
+}
+
+// Alibaba/Qwen currently exposes explicit caching through cache_control rather
+// than OpenRouter's GPT-style marker translation. Keep this as a capability
+// rule, isolated from the prompt architecture, so future provider quirks only
+// change the adapter rather than the assistant context layout.
+function needsNativeCacheControl(modelId) {
+  const model = normalizeOpenRouterModelId(modelId);
+  if (model === 'deepseek/deepseek-v3.2') return true;
+  if (!model.startsWith('qwen/')) return false;
+  const slug = model.slice('qwen/'.length);
+  return slug === 'qwen-plus'
+    || /^qwen3(?:\.\d+)?-max(?:$|[-:])/.test(slug)
+    || /^qwen3(?:\.\d+)?-plus(?:$|[-:])/.test(slug)
+    || /^qwen3(?:\.\d+)?-coder-(?:plus|flash)(?:$|[-:])/.test(slug);
+}
+
+function getOpenRouterCacheStrategy(modelId) {
+  if (!isCacheConversationMode()) return { id: 'rolling-threads-v37a', explicitOpenAI: false, nativeCacheControl: false, useBoundary: false };
+  const model = normalizeOpenRouterModelId(modelId);
+  const explicitOpenAI = supportsOpenAIExplicitPromptCaching(modelId);
+  const nativeCacheControl = needsNativeCacheControl(modelId);
+  const translatedBoundary = model.startsWith('anthropic/') || model.startsWith('google/');
+  const useBoundary = explicitOpenAI || nativeCacheControl || translatedBoundary;
+  let id = 'cache-contract-v2:auto-prefix';
+  if (explicitOpenAI) id = 'cache-contract-v2:openai-explicit';
+  else if (nativeCacheControl) id = 'cache-contract-v2:native-cache-control';
+  else if (translatedBoundary) id = 'cache-contract-v2:translated-boundary';
+  return { id, explicitOpenAI, nativeCacheControl, useBoundary };
 }
 
 function buildOpenRouterChatPayload(chat, messages) {
@@ -2870,8 +2923,20 @@ function buildOpenRouterChatPayload(chat, messages) {
     stream: true,
     ...buildApiParams()
   };
+
   const cacheId = getConversationCacheId(chat);
   if (cacheId) payload.session_id = cacheId;
+
+  if (isCacheConversationMode()) {
+    const strategy = getOpenRouterCacheStrategy(chat.model);
+    // GPT-5.6+ can be told to use only Velvet Dream's explicit boundary instead
+    // of writing an implicit cache through the disposable memory tail.
+    if (strategy.explicitOpenAI && hasPromptCacheBreakpoint(messages)) {
+      if (cacheId) payload.prompt_cache_key = cacheId;
+      payload.prompt_cache_options = { mode: 'explicit', ttl: '30m' };
+    }
+  }
+
   return payload;
 }
 
@@ -2882,9 +2947,40 @@ function formatMemoryTail(mems) {
   return `[RELEVANT MEMORIES]\n\n${framing}\n\n${block}`;
 }
 
-// The tail is added to a copy of the newest user turn, never to stored chat data.
-// This keeps the portable order CI → full conversation → current memory tail.
-function appendMemoryTailToCurrentUserTurn(messages, memoryTail) {
+function cacheBoundaryMetadata(modelId) {
+  if (needsNativeCacheControl(modelId)) return { cache_control: { type: 'ephemeral' } };
+  return { prompt_cache_breakpoint: { mode: 'explicit' } };
+}
+
+function hasPromptCacheBreakpoint(messages) {
+  return messages.some(m => Array.isArray(m.content) && m.content.some(block => block && block.prompt_cache_breakpoint));
+}
+
+function hasAnyCacheBoundary(messages) {
+  return messages.some(m => Array.isArray(m.content) && m.content.some(block => block && (block.prompt_cache_breakpoint || block.cache_control)));
+}
+
+function getAppliedOpenRouterCacheStrategy(modelId, messages) {
+  const strategy = getOpenRouterCacheStrategy(modelId);
+  if (strategy.useBoundary && !hasAnyCacheBoundary(messages)) return 'cache-contract-v2:auto-fallback-no-text-boundary';
+  return strategy.id;
+}
+
+// Automatic-prefix providers already cache Velvet Dream well (DeepSeek and Grok
+// are live-confirmed). Preserve their v37C message shape exactly: the temporary
+// memory tail stays at the end of the newest user turn, and the provider finds
+// the reusable prefix itself.
+function normalizeUserTextBlocksForBoundary(messages) {
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m?.role === 'user' && typeof m.content === 'string') {
+      messages[i] = { ...m, content: [{ type: 'text', text: m.content }] };
+    }
+  }
+  return messages;
+}
+
+function appendMemoryTailForAutomaticPrefix(messages, memoryTail) {
   if (!memoryTail) return messages;
   const idx = [...messages].map(m => m.role).lastIndexOf('user');
   if (idx < 0) {
@@ -2904,6 +3000,39 @@ function appendMemoryTailToCurrentUserTurn(messages, memoryTail) {
     messages[idx] = { ...original, content: memoryTail };
   }
   return messages;
+}
+
+// Mark the end of the stable conversation on the newest user's final text block,
+// then append retrieved memories as a separate volatile block. Everything here is
+// an outbound copy: stored chat.messages remains byte-for-byte untouched.
+function markCacheBoundaryAndAppendMemoryTail(messages, memoryTail, modelId) {
+  const idx = [...messages].map(m => m.role).lastIndexOf('user');
+  if (idx < 0) return { messages, boundaryApplied: false };
+
+  const original = messages[idx];
+  const marker = cacheBoundaryMetadata(modelId);
+  let blocks;
+
+  if (typeof original.content === 'string') {
+    blocks = [{ type: 'text', text: original.content, ...marker }];
+  } else if (Array.isArray(original.content)) {
+    blocks = original.content.map(block => (block && typeof block === 'object') ? { ...block } : block);
+    let textIndex = -1;
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      if (blocks[i]?.type === 'text' && typeof blocks[i].text === 'string') { textIndex = i; break; }
+    }
+    // Explicit breakpoints are defined on text blocks. For image-only turns we
+    // keep the original content untouched and fall back to automatic caching for
+    // that request instead of inserting model-visible marker text.
+    if (textIndex < 0) return { messages, boundaryApplied: false };
+    blocks[textIndex] = { ...blocks[textIndex], ...marker };
+  } else {
+    return { messages, boundaryApplied: false };
+  }
+
+  if (memoryTail) blocks.push({ type: 'text', text: `\n\n${memoryTail}` });
+  messages[idx] = { ...original, content: blocks };
+  return { messages, boundaryApplied: true };
 }
 
 // ===== BUILD API MESSAGES =====
@@ -2929,7 +3058,17 @@ async function buildApiMessages(chat, userContent) {
     chat.messages.forEach(m => messages.push({ role: m.role, content: m.content }));
 
     const mems = await getRelevantMemories(userText);
-    appendMemoryTailToCurrentUserTurn(messages, formatMemoryTail(mems));
+    const memoryTail = formatMemoryTail(mems);
+    const cacheStrategy = getOpenRouterCacheStrategy(chat.model);
+    if (cacheStrategy.useBoundary) {
+      // Normalize user text to the same block shape on every explicit-boundary
+      // request so a turn that was newest last time stays structurally stable
+      // when it becomes history on the next request.
+      normalizeUserTextBlocksForBoundary(messages);
+      markCacheBoundaryAndAppendMemoryTail(messages, memoryTail, chat.model);
+    } else {
+      appendMemoryTailForAutomaticPrefix(messages, memoryTail);
+    }
 
     const totalText = messages.map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join(' ');
     updateInfoBar(mems, estimateTokens(totalText), chat.threads);
@@ -3217,7 +3356,7 @@ async function sendMessage() {
 
     const assistantExtra = {
       model: realModel || chat.model,
-      requestArchitecture: isCacheConversationMode() ? 'conversation-prefix-v1' : 'rolling-threads-v37a'
+      requestArchitecture: isCacheConversationMode() ? getAppliedOpenRouterCacheStrategy(chat.model, apiMsgs) : 'rolling-threads-v37a'
     };
     if (generationUsage) assistantExtra.usage = generationUsage;
     if (generationId) assistantExtra.generationId = generationId;
