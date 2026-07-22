@@ -663,7 +663,7 @@ html, body {
 <div class="app-container" id="appContainer">
   <div class="header" id="appHeader">
     <div class="header-left">
-      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v37B</span></div>
+      <div class="header-title">Velvet Dream <span style="font-size:12px;opacity:0.5;font-family:'DM Sans',sans-serif;font-weight:400;letter-spacing:0.02em">v37C</span></div>
     </div>
     <div class="header-right">
       <button class="header-btn conversations-btn" onclick="toggleSidebar()" title="Conversations">
@@ -2812,7 +2812,6 @@ function getThreadMatchTerms(thread) {
 }
 
 function fastThreadMaintenance(chat) {
-  if (isCacheConversationMode()) return;
   if (!chat || !chat.threads || !chat.threads.length) return;
   const windowSize = state.contextMessages || 8;
   const archiveAfter = Math.max(1, Math.floor(windowSize / 2));
@@ -2920,6 +2919,10 @@ async function buildApiMessages(chat, userContent) {
     ? userContent
     : (userContent.find(c => c.type === 'text')?.text || '');
 
+  // Thread lifecycle stays active in both modes. Cache mode changes only what
+  // is injected into the main assistant request; it does not disable the memory engine.
+  fastThreadMaintenance(chat);
+
   if (cacheMode) {
     // Canonical cache order: stable CI, complete visible conversation, then
     // current ephemeral memories at the end of the newest user turn.
@@ -2929,13 +2932,11 @@ async function buildApiMessages(chat, userContent) {
     appendMemoryTailToCurrentUserTurn(messages, formatMemoryTail(mems));
 
     const totalText = messages.map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join(' ');
-    updateInfoBar(mems, estimateTokens(totalText), []);
+    updateInfoBar(mems, estimateTokens(totalText), chat.threads);
     return messages;
   }
 
-  // Original v37A rolling-context/thread path, unchanged when cache mode is off.
-  fastThreadMaintenance(chat);
-
+  // Original v37A rolling-context/thread injection path, unchanged when cache mode is off.
   if (chat.threads && chat.threads.length) {
     const activeThreads = chat.threads.filter(t => !t.archived);
     if (activeThreads.length) {
@@ -3087,10 +3088,10 @@ async function sendMessage() {
 
   try {
     // Hybrid reactivation — fast half: word-match against the current user
-    // message before we build the prompt, so any archived thread whose name
-    // is mentioned gets its summary into context this turn. The slow half
+    // message before we build the prompt. In rolling mode this can affect prompt
+    // injection immediately; in cache mode it updates only hidden thread state. The slow half
     // (semantic scan) runs inside updateSessionThreads below for oblique cases.
-    if (!isCacheConversationMode()) reactivateThreadsByWordMatch(chat, text);
+    reactivateThreadsByWordMatch(chat, text);
 
     const apiMsgs = await buildApiMessages(chat, userContent);
 
@@ -3228,9 +3229,7 @@ async function sendMessage() {
 
     // Background tasks after a turn — both fire-and-forget, don't block UI
     maybeAutoCapture(chat).catch(e => console.warn('Auto-capture error:', e));
-    if (!isCacheConversationMode()) {
-      updateSessionThreads(chat).catch(e => console.warn('Thread update error:', e));
-    }
+    updateSessionThreads(chat).catch(e => console.warn('Thread update error:', e));
 
   } catch (err) {
     document.getElementById('typing')?.remove();
@@ -3257,7 +3256,7 @@ function stopStreaming() {
 function renderMessages() {
   const area = document.getElementById('chatArea');
   const chat = getActiveChat();
-  updateInfoBar([], null, isCacheConversationMode() ? [] : chat?.threads);
+  updateInfoBar([], null, chat?.threads);
 
   if (!chat || !chat.messages.length) {
     const sync = currentUser ? '<div class="sync-status online">☁ Synced</div>' : (isOfflineMode ? '<div class="sync-status offline">Offline</div>' : '');
@@ -3884,7 +3883,6 @@ let pendingMemoryDraft = null;
 //
 // Returns true if any thread was reactivated (caller can choose to log/render).
 function reactivateThreadsByWordMatch(chat, userText) {
-  if (isCacheConversationMode()) return false;
   if (!chat || !chat.threads || !userText) return false;
   const text = String(userText).toLowerCase();
   if (!text.trim()) return false;
@@ -4041,7 +4039,6 @@ function mergeDuplicateSessionThreads(threads, turnCount) {
 //   id, name, summaryEntries (message-linked append-only chunks), summary (derived prose),
 //   lastTouchedTurn, archived (bool), updatesSincePromotion
 async function updateSessionThreads(chat, options = {}) {
-  if (isCacheConversationMode()) return;
   if (!chat || !state.apiKey) return;
   const lockKey = chat.id || chat;
   const alreadyRunning = threadUpdateInFlight.has(lockKey);
@@ -4389,7 +4386,6 @@ Return ONLY a JSON object listing the IDs of any archived threads that were brou
 // extraction is merged with the existing card via the consolidator so we don't
 // accumulate duplicates.
 async function promoteThreadIfPortable(thread, chat) {
-  if (isCacheConversationMode()) return;
   if (!thread || !thread.summary || !thread.summary.trim()) return;
   if (!state.apiKey) return;
   const source = `Thread: ${thread.name}\n\n${thread.summary}`;
@@ -4846,7 +4842,7 @@ function syncCacheConversationModeUI() {
   if (value) value.textContent = enabled ? 'ALL' : Math.round(Number(slider?.value || state.contextMessages || 10));
   if (status) {
     status.textContent = enabled
-      ? 'ACTIVE · CI → all chat messages → current memory tail · threads dormant'
+      ? 'ACTIVE · CI → all chat messages → current memory tail · thread summaries excluded · memory engine active'
       : `OFF · rolling ${Math.round(Number(slider?.value || state.contextMessages || 10))}-message window · threads active`;
   }
 }
